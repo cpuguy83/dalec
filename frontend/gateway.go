@@ -24,60 +24,24 @@ const (
 	dalecSubrequstForwardBuild = "dalec.forward.build"
 )
 
-func getDockerfile(ctx context.Context, client gwclient.Client, build *dalec.SourceBuild, defPb *pb.Definition) ([]byte, error) {
-	dockerfilePath := dockerui.DefaultDockerfileName
-
-	if build.DockerFile != "" {
-		dockerfilePath = build.DockerFile
-	}
-
-	// First we need to read the dockerfile to determine what frontend to forward to
-	res, err := client.Solve(ctx, gwclient.SolveRequest{
-		Definition: defPb,
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "error getting build context")
-	}
-
-	ref, err := res.SingleRef()
-	if err != nil {
-		return nil, err
-	}
-
-	dt, err := ref.ReadFile(ctx, gwclient.ReadRequest{
-		Filename: dockerfilePath,
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "error reading dockerfile")
-	}
-	return dt, nil
-}
-
 // ForwarderFromClient creates a [dalec.ForwarderFunc] from a gateway client.
-// This is used for forwarding builds to other frontends in [dalec.Source2LLBGetter]
+// This is used for forwarding builds to other frontends
 func ForwarderFromClient(ctx context.Context, client gwclient.Client) dalec.ForwarderFunc {
-	return func(st llb.State, spec *dalec.SourceBuild) (llb.State, error) {
-		if spec == nil {
-			spec = &dalec.SourceBuild{}
-		}
-
-		def, err := st.Marshal(ctx)
+	return func(bctx llb.State, dockfile llb.State, spec *dalec.SourceBuild) (llb.State, error) {
+		def, err := bctx.Marshal(ctx)
 		if err != nil {
 			return llb.Scratch(), err
 		}
 		defPb := def.ToPB()
 
-		dockerfileDt, err := getDockerfile(ctx, client, spec, defPb)
+		dockerfileDef, err := dockfile.Marshal(ctx)
 		if err != nil {
 			return llb.Scratch(), err
 		}
 
-		dockerfile := llb.Scratch().File(
-			llb.Mkfile("Dockerfile", 0600, dockerfileDt),
-		)
-		dockerfileDef, err := dockerfile.Marshal(ctx)
-		if err != nil {
-			return llb.Scratch(), err
+		filename := spec.DockerfilePath
+		if filename == "" {
+			filename = dockerui.DefaultDockerfileName
 		}
 
 		req := gwclient.SolveRequest{
@@ -86,7 +50,27 @@ func ForwarderFromClient(ctx context.Context, client gwclient.Client) dalec.Forw
 				dockerui.DefaultLocalNameContext: defPb,
 				"dockerfile":                     dockerfileDef.ToPB(),
 			},
-			FrontendOpt: map[string]string{},
+			FrontendOpt: map[string]string{
+				"filename": filename,
+			},
+		}
+
+		res, err := client.Solve(ctx, gwclient.SolveRequest{
+			Definition: dockerfileDef.ToPB(),
+		})
+		if err != nil {
+			return llb.Scratch(), errors.Wrap(err, "could not get dockerfile definition")
+		}
+		ref, err := res.SingleRef()
+		if err != nil {
+			return llb.Scratch(), err
+		}
+
+		dockerfileDt, err := ref.ReadFile(ctx, gwclient.ReadRequest{
+			Filename: filename,
+		})
+		if err != nil {
+			return llb.Scratch(), errors.Wrap(err, "could not read dockerfile")
 		}
 
 		if ref, cmdline, _, ok := parser.DetectSyntax(dockerfileDt); ok {
@@ -108,11 +92,11 @@ func ForwarderFromClient(ctx context.Context, client gwclient.Client) dalec.Forw
 			return llb.Scratch(), err
 		}
 
-		res, err := client.Solve(ctx, req)
+		res, err = client.Solve(ctx, req)
 		if err != nil {
 			return llb.Scratch(), err
 		}
-		ref, err := res.SingleRef()
+		ref, err = res.SingleRef()
 		if err != nil {
 			return llb.Scratch(), err
 		}

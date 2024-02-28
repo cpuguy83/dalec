@@ -721,14 +721,28 @@ func getSourceOp(ctx context.Context, t *testing.T, src Source) []*pb.Op {
 
 	var sOpt SourceOpts
 	if src.Build != nil {
-		if src.Build.Source.Inline == nil || src.Build.Source.Inline.File == nil {
+		if src.Build.Source != nil && (src.Build.Source.Inline == nil || src.Build.Source.Inline.File == nil) {
 			t.Fatal("Cannot test from a Dockerfile without inline content")
 		}
-		sOpt.Forward = func(_ llb.State, build *SourceBuild) (llb.State, error) {
+		sOpt.Forward = func(_ llb.State, dockerfile llb.State, _ *SourceBuild) (llb.State, error) {
+			var dt []byte
+			if src.Build.Dockerfile != nil {
+				if src.Build.Dockerfile.Inline == nil || src.Build.Dockerfile.Inline.File == nil {
+					t.Fatal("Cannot test from a Dockerfile without inline content")
+				}
+				dt = []byte(src.Build.Dockerfile.Inline.File.Contents)
+			}
+
+			if dt == nil {
+				if src.Build.Source.Inline == nil || src.Build.Source.Inline.File == nil {
+					t.Fatal("Cannot test from a Dockerfile without inline content")
+				}
+				dt = []byte(src.Build.Source.Inline.File.Contents)
+			}
+
 			// Note, we can't really test anything other than inline here because we don't have access to the actual buildkit client,
 			// so we can't extract extract the dockerfile from the input state (nor do we have any input state)
-			src := []byte(src.Build.Source.Inline.File.Contents)
-			st, _, _, err := dockerfile2llb.Dockerfile2LLB(ctx, src, dockerfile2llb.ConvertOpt{
+			st, _, _, err := dockerfile2llb.Dockerfile2LLB(ctx, dt, dockerfile2llb.ConvertOpt{
 				MetaResolver: stubMetaResolver{},
 			})
 			return *st, err

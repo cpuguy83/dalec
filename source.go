@@ -7,6 +7,7 @@ import (
 	"io"
 
 	"github.com/moby/buildkit/client/llb"
+	"github.com/moby/buildkit/frontend/dockerui"
 	"github.com/moby/buildkit/util/gitutil"
 	"github.com/pkg/errors"
 )
@@ -62,7 +63,7 @@ func getSource(src Source, name string, sOpt SourceOpts, opts ...llb.Constraints
 	case src.DockerImage != nil:
 		st, err = src.DockerImage.AsState(name, src.Path, sOpt, opts...)
 	case src.Build != nil:
-		st, err = src.Build.AsState(name, &src, sOpt, opts...)
+		st, err = src.Build.AsState(name, sOpt, opts...)
 	case src.Inline != nil:
 		st, err = src.Inline.AsState(name)
 	default:
@@ -148,7 +149,7 @@ var sourceNamePathSeparatorError = errors.New("source name must not container pa
 
 type LLBGetter func(sOpts SourceOpts, opts ...llb.ConstraintsOpt) (llb.State, error)
 
-type ForwarderFunc func(llb.State, *SourceBuild) (llb.State, error)
+type ForwarderFunc func(buildCtx, dockerfile llb.State, spec *SourceBuild) (llb.State, error)
 
 type SourceOpts struct {
 	Resolver   llb.ImageMetaResolver
@@ -331,9 +332,9 @@ func (s Source) Doc(name string) (io.Reader, error) {
 			}
 		}
 
-		p := "Dockerfile"
-		if s.Build.DockerFile != "" {
-			p = s.Build.DockerFile
+		p := dockerui.DefaultDockerfileName
+		if s.Build.DockerfilePath != "" {
+			p = s.Build.DockerfilePath
 		}
 		fmt.Fprintln(b, "	Dockerfile path in context:", p)
 	case s.HTTP != nil:

@@ -83,11 +83,11 @@ func (s *Source) substituteBuildArgs(args map[string]string) error {
 			return err
 		}
 
-		updated, err := lex.ProcessWordWithMap(s.Build.DockerFile, args)
+		updated, err := lex.ProcessWordWithMap(s.Build.DockerfilePath, args)
 		if err != nil {
 			return err
 		}
-		s.Build.DockerFile = updated
+		s.Build.DockerfilePath = updated
 
 		updated, err = lex.ProcessWordWithMap(s.Build.Target, args)
 		if err != nil {
@@ -101,6 +101,8 @@ func (s *Source) substituteBuildArgs(args map[string]string) error {
 
 func fillDefaults(s *Source) {
 	switch {
+	case s == nil:
+		return
 	case s.DockerImage != nil:
 		if s.DockerImage.Cmd != nil {
 			for _, mnt := range s.DockerImage.Cmd.Mounts {
@@ -114,19 +116,14 @@ func fillDefaults(s *Source) {
 			s.Context.Name = dockerui.DefaultLocalNameContext
 		}
 	case s.Build != nil:
-		fillDefaults(&s.Build.Source)
+		fillDefaults(s.Build.Source)
+		fillDefaults(s.Build.Dockerfile)
 	case s.Inline != nil:
 	}
 }
 
-func (s *Source) validate(failContext ...string) (retErr error) {
+func (s *Source) validate() (retErr error) {
 	count := 0
-
-	defer func() {
-		if retErr != nil && failContext != nil {
-			retErr = errors.Wrap(retErr, strings.Join(failContext, " "))
-		}
-	}()
 
 	if s.DockerImage != nil {
 		if s.DockerImage.Ref == "" {
@@ -135,8 +132,8 @@ func (s *Source) validate(failContext ...string) (retErr error) {
 
 		if s.DockerImage.Cmd != nil {
 			for _, mnt := range s.DockerImage.Cmd.Mounts {
-				if err := mnt.Spec.validate("docker image source with ref", "'"+s.DockerImage.Ref+"'"); err != nil {
-					retErr = goerrors.Join(retErr, err)
+				if err := mnt.Spec.validate(); err != nil {
+					retErr = goerrors.Join(retErr, errors.Wrap(err, "error validating source mount"))
 				}
 			}
 		}
@@ -154,9 +151,8 @@ func (s *Source) validate(failContext ...string) (retErr error) {
 		count++
 	}
 	if s.Build != nil {
-		c := s.Build.DockerFile
-		if err := s.Build.validate("build source with dockerfile", "`"+c+"`"); err != nil {
-			retErr = goerrors.Join(retErr, err)
+		if err := s.Build.validate(); err != nil {
+			retErr = goerrors.Join(retErr, errors.Wrap(err, "error validating build source"))
 		}
 
 		count++

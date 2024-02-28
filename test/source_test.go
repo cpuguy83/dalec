@@ -64,6 +64,7 @@ func TestSourceCmd(t *testing.T) {
 func TestSourceBuild(t *testing.T) {
 	t.Parallel()
 
+	const dockerfile = "FROM busybox\nRUN echo hello > /hello"
 	doBuildTest := func(t *testing.T, subTest string, spec *dalec.Spec) {
 		t.Run(subTest, func(t *testing.T) {
 			t.Parallel()
@@ -81,16 +82,15 @@ func TestSourceBuild(t *testing.T) {
 		})
 	}
 
-	const dockerfile = "FROM busybox\nRUN echo hello > /hello"
-
-	newBuildSpec := func(p string, f func() dalec.Source) *dalec.Spec {
+	newBuildSpec := func(p string, srcFn, dockerfileFn func() *dalec.Source) *dalec.Spec {
 		return &dalec.Spec{
 			Sources: map[string]dalec.Source{
 				"test": {
 					Path: "/hello",
 					Build: &dalec.SourceBuild{
-						DockerFile: p,
-						Source:     f(),
+						DockerfilePath: p,
+						Source:         srcFn(),
+						Dockerfile:     dockerfileFn(),
 					},
 				},
 			},
@@ -98,8 +98,8 @@ func TestSourceBuild(t *testing.T) {
 	}
 
 	t.Run("inline", func(t *testing.T) {
-		fileSrc := func() dalec.Source {
-			return dalec.Source{
+		fileSrc := func() *dalec.Source {
+			return &dalec.Source{
 				Inline: &dalec.SourceInline{
 					File: &dalec.SourceInlineFile{
 						Contents: dockerfile,
@@ -107,9 +107,9 @@ func TestSourceBuild(t *testing.T) {
 				},
 			}
 		}
-		dirSrc := func(p string) func() dalec.Source {
-			return func() dalec.Source {
-				return dalec.Source{
+		dirSrc := func(p string) func() *dalec.Source {
+			return func() *dalec.Source {
+				return &dalec.Source{
 					Inline: &dalec.SourceInline{
 						Dir: &dalec.SourceInlineDir{
 							Files: map[string]*dalec.SourceInlineFile{
@@ -123,19 +123,29 @@ func TestSourceBuild(t *testing.T) {
 			}
 		}
 
+		nilSrc := func() *dalec.Source {
+			return nil
+		}
+
 		t.Run("unspecified build file path", func(t *testing.T) {
-			doBuildTest(t, "file", newBuildSpec("", fileSrc))
-			doBuildTest(t, "dir", newBuildSpec("", dirSrc("Dockerfile")))
+			t.Run("dockerfile in source", func(t *testing.T) {
+				doBuildTest(t, "file", newBuildSpec("", fileSrc, nilSrc))
+				doBuildTest(t, "dir", newBuildSpec("", dirSrc("Dockerfile"), nilSrc))
+			})
+			t.Run("no build source just dockerfile", func(t *testing.T) {
+				doBuildTest(t, "file", newBuildSpec("", nilSrc, fileSrc))
+				doBuildTest(t, "dir", newBuildSpec("", nilSrc, dirSrc("Dockerfile")))
+			})
 		})
 
 		t.Run("Dockerfile as build file path", func(t *testing.T) {
-			doBuildTest(t, "file", newBuildSpec("Dockerfile", fileSrc))
-			doBuildTest(t, "dir", newBuildSpec("Dockerfile", dirSrc("Dockerfile")))
+			doBuildTest(t, "file", newBuildSpec("Dockerfile", fileSrc, nilSrc))
+			doBuildTest(t, "dir", newBuildSpec("Dockerfile", dirSrc("Dockerfile"), nilSrc))
 		})
 
 		t.Run("non-standard build file path", func(t *testing.T) {
-			doBuildTest(t, "file", newBuildSpec("foo", fileSrc))
-			doBuildTest(t, "dir", newBuildSpec("foo", dirSrc("foo")))
+			doBuildTest(t, "file", newBuildSpec("foo", fileSrc, nilSrc))
+			doBuildTest(t, "dir", newBuildSpec("foo", dirSrc("foo"), nilSrc))
 		})
 	})
 }

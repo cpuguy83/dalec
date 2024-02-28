@@ -83,15 +83,15 @@ func TestSourceValidation(t *testing.T) {
 			expectErr: true,
 			src: Source{
 				Build: &SourceBuild{
-					Source: Source{
+					Source: &Source{
 						Build: &SourceBuild{
-							DockerFile: "/other/nonempty/Dockerfile/path",
-							Source: Source{
+							DockerfilePath: "/other/nonempty/Dockerfile/path",
+							Source: &Source{
 								Git: &SourceGit{},
 							},
 						},
 					},
-					DockerFile: "/nonempty/Dockerfile/path",
+					DockerfilePath: "/nonempty/Dockerfile/path",
 				},
 			},
 		},
@@ -100,13 +100,20 @@ func TestSourceValidation(t *testing.T) {
 			expectErr: true,
 			src: Source{
 				Build: &SourceBuild{
-					Source: Source{
+					Source: &Source{
 						DockerImage: &SourceDockerImage{
 							Ref: "",
 						},
 					},
-					DockerFile: "/nonempty/Dockerfile/path",
+					DockerfilePath: "/nonempty/Dockerfile/path",
 				},
+			},
+		},
+		{
+			title:     "has no source or dockerfile",
+			expectErr: true,
+			src: Source{
+				Build: &SourceBuild{},
 			},
 		},
 		{
@@ -114,7 +121,7 @@ func TestSourceValidation(t *testing.T) {
 			expectErr: true,
 			src: Source{
 				Build: &SourceBuild{
-					Source: Source{
+					Source: &Source{
 						DockerImage: &SourceDockerImage{
 							Ref: "nonempty:latest",
 							Cmd: &Command{
@@ -131,7 +138,7 @@ func TestSourceValidation(t *testing.T) {
 							},
 						},
 					},
-					DockerFile: "/nonempty/Dockerfile/path",
+					DockerfilePath: "/nonempty/Dockerfile/path",
 				},
 			},
 		},
