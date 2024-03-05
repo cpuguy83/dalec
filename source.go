@@ -51,7 +51,7 @@ func getFilter(src Source, forMount bool, opts ...llb.ConstraintsOpt) llb.StateO
 	return func(st llb.State) llb.State { return st }
 }
 
-func getSource(src Source, name string, sOpt SourceOpts, opts ...llb.ConstraintsOpt) (st llb.State, err error) {
+func getSource(src Source, name string, sOpt SourceOpts, opts ...llb.ConstraintsOpt) (st llb.State, deps map[string]llb.State, err error) {
 	// load the source
 	switch {
 	case src.HTTP != nil:
@@ -66,6 +66,16 @@ func getSource(src Source, name string, sOpt SourceOpts, opts ...llb.Constraints
 		st, err = src.Build.AsState(name, &src, sOpt, opts...)
 	case src.Inline != nil:
 		st, err = src.Inline.AsState(name)
+	case src.Gomod != nil:
+		if sOpt.Worker == nil {
+			return llb.Scratch(), nil, errNoGoWorker
+		}
+		mod, mods, err := src.Gomod.AsState(*sOpt.Worker, opts...)
+		if err != nil {
+			return llb.Scratch(), nil, err
+		}
+		st = mod
+		deps = map[string]llb.State{GoModDepsKey: mods}
 	default:
 		st, err = llb.Scratch(), errNoSourceVariant
 	}
@@ -125,12 +135,16 @@ func (src *SourceDockerImage) AsState(name string, path string, sOpt SourceOpts,
 }
 
 func (src *SourceBuild) AsState(name string, _ *Source, sOpt SourceOpts, opts ...llb.ConstraintsOpt) (llb.State, error) {
-	st, err := src.Source.AsState(name, sOpt, opts...)
+	st, deps, err := src.Source.AsState(name, sOpt, opts...)
 	if err != nil {
 		if !errors.Is(err, errNoSourceVariant) || src.Inline == "" {
 			return llb.Scratch(), err
 		}
 		st = llb.Scratch()
+	}
+
+	if len(deps) > 0 {
+		return llb.Scratch(), errors.New("sources with dependencies not supported for build sources")
 	}
 
 	st, err = sOpt.Forward(st, src)
@@ -172,27 +186,36 @@ type SourceOpts struct {
 	Resolver   llb.ImageMetaResolver
 	Forward    ForwarderFunc
 	GetContext func(string, ...llb.LocalOption) (*llb.State, error)
+	Worker     *llb.State
 }
 
 func shArgs(cmd string) llb.RunOption {
 	return llb.Args([]string{"sh", "-c", cmd})
 }
 
-func (s *Source) asState(name string, forMount bool, sOpt SourceOpts, opts ...llb.ConstraintsOpt) (llb.State, error) {
-	st, err := getSource(*s, name, sOpt, opts...)
+func (s *Source) asState(name string, forMount bool, sOpt SourceOpts, opts ...llb.ConstraintsOpt) (llb.State, map[string]llb.State, error) {
+	st, deps, err := getSource(*s, name, sOpt, opts...)
 	if err != nil {
-		return llb.Scratch(), err
+		return llb.Scratch(), nil, err
 	}
 
-	return st.With(getFilter(*s, forMount)), nil
+	return st.With(getFilter(*s, forMount)), deps, nil
 }
 
-func (s *Source) AsState(name string, sOpt SourceOpts, opts ...llb.ConstraintsOpt) (llb.State, error) {
+func (s *Source) AsState(name string, sOpt SourceOpts, opts ...llb.ConstraintsOpt) (llb.State, map[string]llb.State, error) {
 	return s.asState(name, false, sOpt, opts...)
 }
 
 func (s *Source) AsMount(name string, sOpt SourceOpts, opts ...llb.ConstraintsOpt) (llb.State, error) {
-	return s.asState(name, true, sOpt, opts...)
+	st, deps, err := s.asState(name, true, sOpt, opts...)
+	if err != nil {
+		return llb.Scratch(), err
+	}
+
+	if len(deps) > 0 {
+		return llb.Scratch(), errors.New("sources with dependencies not supported for mounts")
+	}
+	return st, nil
 }
 
 // must not be called with a nil cmd pointer

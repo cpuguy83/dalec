@@ -18,6 +18,9 @@ func BuildrootHandler(target string) frontend.BuildFunc {
 			return nil, nil, err
 		}
 
+		worker := llb.Image(TarImageRef, llb.WithMetaResolver(client))
+		sOpt.Worker = &worker
+
 		st, err := SpecToBuildrootLLB(spec, target, sOpt)
 		if err != nil {
 			return nil, nil, err
@@ -46,10 +49,11 @@ func SpecToBuildrootLLB(spec *dalec.Spec, target string, sOpt dalec.SourceOpts, 
 		return llb.Scratch(), fmt.Errorf("invalid spec: %w", err)
 	}
 	opts = append(opts, dalec.ProgressGroup("Create RPM buildroot"))
-	sources, err := Dalec2SourcesLLB(spec, sOpt, opts...)
+	sources, deps, err := Dalec2SourcesLLB(spec, sOpt, opts...)
 	if err != nil {
 		return llb.Scratch(), err
 	}
 
+	sources = addDepsToSources(sources, deps)
 	return Dalec2SpecLLB(spec, dalec.MergeAtPath(llb.Scratch(), sources, "SOURCES"), target, "", opts...)
 }

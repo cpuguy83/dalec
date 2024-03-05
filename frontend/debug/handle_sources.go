@@ -19,12 +19,15 @@ func HandleSources(ctx context.Context, gwc client.Client, spec *dalec.Spec) (cl
 
 	sources := make([]llb.State, 0, len(spec.Sources))
 	for name, src := range spec.Sources {
-		st, err := src.AsState(name, sOpt)
+		st, deps, err := src.AsState(name, sOpt)
 		if err != nil {
 			return nil, nil, err
 		}
-
 		sources = append(sources, st)
+
+		if len(deps) > 0 {
+
+		}
 	}
 
 	def, err := dalec.MergeAtPath(llb.Scratch(), sources, "/").Marshal(ctx)

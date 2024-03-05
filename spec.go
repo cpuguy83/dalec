@@ -287,6 +287,7 @@ type Source struct {
 	Context     *SourceContext     `yaml:"context,omitempty" json:"context,omitempty"`
 	Build       *SourceBuild       `yaml:"build,omitempty" json:"build,omitempty"`
 	Inline      *SourceInline      `yaml:"inline,omitempty" json:"inline,omitempty"`
+	Gomod       *SourceGoModule    `yaml:"gomod,omitempty" json:"gomod,omitempty"`
 	// === End Source Variants ===
 
 	// Path is the path to the source after fetching it based on the identifier.

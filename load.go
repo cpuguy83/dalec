@@ -66,6 +66,18 @@ func (s *Source) substituteBuildArgs(args map[string]string) error {
 			return err
 		}
 		s.Git.Commit = updated
+	case s.Gomod != nil:
+		updated, err := lex.ProcessWordWithMap(s.Gomod.URL, args)
+		if err != nil {
+			return err
+		}
+		s.Gomod.URL = updated
+
+		updated, err = lex.ProcessWordWithMap(s.Gomod.Commit, args)
+		if err != nil {
+			return err
+		}
+		s.Gomod.Commit = updated
 	case s.HTTP != nil:
 		updated, err := lex.ProcessWordWithMap(s.HTTP.URL, args)
 		if err != nil {
@@ -170,6 +182,10 @@ func (s *Source) validate(failContext ...string) (retErr error) {
 		if err := s.Inline.validate(s.Path); err != nil {
 			retErr = goerrors.Join(retErr, err)
 		}
+		count++
+	}
+
+	if s.Gomod != nil {
 		count++
 	}
 
@@ -384,32 +400,48 @@ func (s *Spec) FillDefaults() {
 }
 
 func (s Spec) Validate() error {
+	var (
+		hasGomods          bool
+		hasGomodSourceName bool
+		retErr             error
+	)
+
 	for name, src := range s.Sources {
+		if src.Gomod != nil {
+			hasGomods = true
+		}
+		if name == GoModDepsKey {
+			hasGomodSourceName = true
+		}
 		if strings.ContainsRune(name, os.PathSeparator) {
-			return &InvalidSourceError{Name: name, Err: sourceNamePathSeparatorError}
+			retErr = goerrors.Join(retErr, &InvalidSourceError{Name: name, Err: sourceNamePathSeparatorError})
 		}
 		if err := src.validate(); err != nil {
-			return &InvalidSourceError{Name: name, Err: fmt.Errorf("error validating source ref %q: %w", name, err)}
+			retErr = goerrors.Join(retErr, &InvalidSourceError{Name: name, Err: fmt.Errorf("error validating source ref %q: %w", name, err)})
 		}
 
 		if src.DockerImage != nil && src.DockerImage.Cmd != nil {
 			for p, cfg := range src.DockerImage.Cmd.CacheDirs {
 				if _, err := sharingMode(cfg.Mode); err != nil {
-					return &InvalidSourceError{Name: name, Err: errors.Wrapf(err, "invalid sharing mode for source %q with cache mount at path %q", name, p)}
+					retErr = goerrors.Join(&InvalidSourceError{Name: name, Err: errors.Wrapf(err, "invalid sharing mode for source %q with cache mount at path %q", name, p)})
 				}
 			}
 		}
 	}
 
+	if hasGomods && hasGomodSourceName {
+		retErr = goerrors.Join(retErr, errors.New("source name "+GoModDepsKey+" is reserved for gomod dependencies and cannot be used as a source name when explicit go module sources are defined"))
+	}
+
 	for _, t := range s.Tests {
 		for p, cfg := range t.CacheDirs {
 			if _, err := sharingMode(cfg.Mode); err != nil {
-				return errors.Wrapf(err, "invalid sharing mode for test %q with cache mount at path %q", t.Name, p)
+				retErr = goerrors.Join(retErr, errors.Wrapf(err, "invalid sharing mode for test %q with cache mount at path %q", t.Name, p))
 			}
 		}
 	}
 
-	return nil
+	return retErr
 }
 
 func (c *CheckOutput) processBuildArgs(lex *shell.Lex, args map[string]string) error {

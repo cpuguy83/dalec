@@ -2,11 +2,13 @@ package rpm
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"text/template"
 
 	"github.com/Azure/dalec"
@@ -43,7 +45,8 @@ BuildArch: noarch
 
 type specWrapper struct {
 	*dalec.Spec
-	Target string
+	Target    string
+	hasGomods bool
 }
 
 func (w *specWrapper) Changelog() (fmt.Stringer, error) {
@@ -200,34 +203,40 @@ func (w *specWrapper) PrepareSources() (fmt.Stringer, error) {
 	// Sort keys for consistent output
 	keys := dalec.SortMapKeys(w.Spec.Sources)
 
+	setupSource := func(name string, isDir bool) {
+		if patches[name] {
+			// This source is a patch so we don't need to set anything up
+			return
+		}
+
+		if !isDir {
+			fmt.Fprintf(b, "cp -a \"%%{_sourcedir}/%s\" .\n", name)
+			return
+		}
+
+		fmt.Fprintf(b, "mkdir -p \"%%{_builddir}/%s\"\n", name)
+		fmt.Fprintf(b, "tar -C \"%%{_builddir}/%s\" -xzf \"%%{_sourcedir}/%s.tar.gz\"\n", name, name)
+
+		for _, patch := range w.Spec.Patches[name] {
+			fmt.Fprintf(b, "patch -d %q -p%d -s < \"%%{_sourcedir}/%s\"\n", name, *patch.Strip, patch.Source)
+		}
+	}
+
+	setupGomods := sync.OnceFunc(func() {
+		setupSource(dalec.GoModDepsKey, true)
+		w.hasGomods = true
+	})
+
 	for _, name := range keys {
 		src := w.Spec.Sources[name]
-		err := func(name string, src dalec.Source) error {
-			if patches[name] {
-				// This source is a patch so we don't need to set anything up
-				return nil
-			}
 
-			isDir, err := dalec.SourceIsDir(src)
-			if err != nil {
-				return err
-			}
-
-			if !isDir {
-				fmt.Fprintf(b, "cp -a \"%%{_sourcedir}/%s\" .\n", name)
-				return nil
-			}
-
-			fmt.Fprintf(b, "mkdir -p \"%%{_builddir}/%s\"\n", name)
-			fmt.Fprintf(b, "tar -C \"%%{_builddir}/%s\" -xzf \"%%{_sourcedir}/%s.tar.gz\"\n", name, name)
-
-			for _, patch := range w.Spec.Patches[name] {
-				fmt.Fprintf(b, "patch -d %q -p%d -s < \"%%{_sourcedir}/%s\"\n", name, *patch.Strip, patch.Source)
-			}
-			return nil
-		}(name, src)
+		isDir, err := dalec.SourceIsDir(src)
 		if err != nil {
 			return nil, fmt.Errorf("error preparing source %s: %w", name, err)
+		}
+		setupSource(name, isDir)
+		if src.Gomod != nil {
+			setupGomods()
 		}
 	}
 	return b, nil
@@ -245,12 +254,12 @@ func writeStep(b *strings.Builder, step dalec.BuildStep) {
 	fmt.Fprintln(b, ")") // end subshell
 }
 
-func (w *specWrapper) BuildSteps() fmt.Stringer {
+func (w *specWrapper) BuildSteps() (fmt.Stringer, error) {
 	b := &strings.Builder{}
 
 	t := w.Spec.Build
 	if len(t.Steps) == 0 {
-		return b
+		return b, nil
 	}
 
 	fmt.Fprintf(b, "%%build\n")
@@ -259,6 +268,10 @@ func (w *specWrapper) BuildSteps() fmt.Stringer {
 
 	envKeys := dalec.SortMapKeys(t.Env)
 	for _, k := range envKeys {
+		if k == "GOMODCACHE" && w.hasGomods {
+			return nil, errors.New("GOMODCACHE set by build env but conflicts with gomods source: cannot mix gomod sources and GOMODCACHE in the same build environment")
+		}
+
 		v := t.Env[k]
 		fmt.Fprintf(b, "export %s=\"%s\"\n", k, v)
 	}
@@ -267,7 +280,7 @@ func (w *specWrapper) BuildSteps() fmt.Stringer {
 		writeStep(b, step)
 	}
 
-	return b
+	return b, nil
 }
 
 func (w *specWrapper) Install() fmt.Stringer {
@@ -334,7 +347,7 @@ func (w *specWrapper) Files() fmt.Stringer {
 
 // WriteSpec generates an rpm spec from the provided [dalec.Spec] and distro target and writes it to the passed in writer
 func WriteSpec(spec *dalec.Spec, target string, w io.Writer) error {
-	s := &specWrapper{spec, target}
+	s := &specWrapper{Spec: spec, Target: target}
 
 	err := specTmpl.Execute(w, s)
 	if err != nil {

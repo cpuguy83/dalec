@@ -2,6 +2,7 @@ package rpm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/image"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"golang.org/x/exp/maps"
 )
 
 // TarImageRef is the image used to create tarballs of sources
@@ -21,14 +23,12 @@ func shArgs(cmd string) llb.RunOption {
 	return llb.Args([]string{"sh", "-c", cmd})
 }
 
-func tar(src llb.State, dest string, opts ...llb.ConstraintsOpt) llb.State {
-	tarImg := llb.Image(TarImageRef, dalec.WithConstraints(opts...))
-
+func tar(worker, src llb.State, dest string, opts ...llb.ConstraintsOpt) llb.State {
 	// Put the output tar in a consistent location regardless of `dest`
 	// This way if `dest` changes we don't have to rebuild the tarball, which can be expensive.
 	outBase := "/tmp/out"
 	out := filepath.Join(outBase, filepath.Dir(dest))
-	worker := tarImg.Run(
+	work := worker.Run(
 		llb.AddMount("/src", src, llb.Readonly),
 		shArgs("tar -C /src -cvzf /tmp/st ."),
 		dalec.WithConstraints(opts...),
@@ -38,7 +38,7 @@ func tar(src llb.State, dest string, opts ...llb.ConstraintsOpt) llb.State {
 			dalec.WithConstraints(opts...),
 		)
 
-	return worker.AddMount(outBase, llb.Scratch())
+	return work.AddMount(outBase, llb.Scratch())
 }
 
 func HandleSources(ctx context.Context, client gwclient.Client, spec *dalec.Spec) (gwclient.Reference, *image.Image, error) {
@@ -47,10 +47,12 @@ func HandleSources(ctx context.Context, client gwclient.Client, spec *dalec.Spec
 		return nil, nil, err
 	}
 
-	sources, err := Dalec2SourcesLLB(spec, sOpt)
+	sources, deps, err := Dalec2SourcesLLB(spec, sOpt)
 	if err != nil {
 		return nil, nil, err
 	}
+
+	sources = addDepsToSources(sources, deps)
 
 	// Now we can merge sources into the desired path
 	st := dalec.MergeAtPath(llb.Scratch(), sources, "/SOURCES")
@@ -71,18 +73,24 @@ func HandleSources(ctx context.Context, client gwclient.Client, spec *dalec.Spec
 	return ref, &image.Image{}, err
 }
 
-func Dalec2SourcesLLB(spec *dalec.Spec, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) ([]llb.State, error) {
+func Dalec2SourcesLLB(spec *dalec.Spec, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) ([]llb.State, map[string]llb.State, error) {
 	// Sort the map keys so that the order is consistent This shouldn't be
 	// needed when MergeOp is supported, but when it is not this will improve
 	// cache hits for callers of this function.
 	sorted := dalec.SortMapKeys(spec.Sources)
 
+	if sOpt.Worker == nil {
+		return nil, nil, errors.New("worker image for fetching sources not set: this is a bug in the buildkit frontend")
+	}
+
 	out := make([]llb.State, 0, len(spec.Sources))
+	var gomods []llb.State
+
 	for _, k := range sorted {
 		src := spec.Sources[k]
 		isDir, err := dalec.SourceIsDir(src)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		s := ""
@@ -100,21 +108,52 @@ func Dalec2SourcesLLB(spec *dalec.Spec, sOpt dalec.SourceOpts, opts ...llb.Const
 		case src.Inline != nil:
 			s = "inline"
 		default:
-			return nil, fmt.Errorf("no non-nil source provided")
+			return nil, nil, fmt.Errorf("no non-nil source provided")
 		}
 
 		pg := dalec.ProgressGroup("Add spec source: " + k + " " + s)
-		st, err := src.AsState(k, sOpt, append(opts, pg)...)
+		st, deps, err := src.AsState(k, sOpt, append(opts, pg)...)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+
+		if len(deps) > 0 {
+			mods, ok := deps[dalec.GoModDepsKey]
+			if ok {
+				gomods = append(gomods, mods)
+				delete(deps, dalec.GoModDepsKey)
+			}
+
+			if len(deps) > 0 {
+				// For now we'll only support gomods as a special case
+				// But the underlying code should be able to support more if needed.
+				return nil, nil, fmt.Errorf("unexpected dependencies: %v", maps.Keys(deps))
+			}
 		}
 
 		if isDir {
-			out = append(out, tar(st, k+".tar.gz", append(opts, pg)...))
+			out = append(out, tar(*sOpt.Worker, st, k+".tar.gz", append(opts, pg)...))
 		} else {
 			out = append(out, st)
 		}
 	}
 
-	return out, nil
+	var depsOut map[string]llb.State
+	if len(gomods) > 0 {
+		st := dalec.MergeAtPath(llb.Scratch(), gomods, dalec.GoModDepsKey)
+		depsOut = make(map[string]llb.State, 1)
+		depsOut[dalec.GoModDepsKey] = st
+	}
+
+	return out, depsOut, nil
+}
+
+func addDepsToSources(sources []llb.State, deps map[string]llb.State) []llb.State {
+	for k, v := range deps {
+		st := llb.Scratch().File(
+			llb.Copy(v, "/", k),
+		)
+		sources = append(sources, st)
+	}
+	return sources
 }
