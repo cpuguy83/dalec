@@ -25,10 +25,11 @@ func main() {
 
 	ctx := appcontext.Context()
 
-	mariner2.RegisterHandlers()
-	debug.RegisterHandlers()
-
-	if err := grpcclient.RunFromEnvironment(ctx, frontend.Build); err != nil {
+	builtins := map[string]frontend.FetchHandlersFunc{
+		mariner2.DefaultTargetKey: mariner2.Handlers,
+		"debug":                   debug.Handlers,
+	}
+	if err := grpcclient.RunFromEnvironment(ctx, frontend.NewBuilder(builtins)); err != nil {
 		bklog.L.WithError(err).Fatal("error running frontend")
 		os.Exit(137)
 	}

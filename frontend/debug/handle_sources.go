@@ -11,7 +11,7 @@ import (
 )
 
 // HandleSources is a handler that outputs all the sources.
-func HandleSources(ctx context.Context, gwc client.Client, spec *dalec.Spec) (client.Reference, *image.Image, error) {
+func HandleSources(ctx context.Context, gwc client.Client, spec *dalec.Spec, _ string) (client.Reference, *image.Image, error) {
 	sOpt, err := frontend.SourceOptFromClient(ctx, gwc)
 	if err != nil {
 		return nil, nil, err

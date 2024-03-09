@@ -23,25 +23,36 @@ func main() {
 
 	ctx := appcontext.Context()
 
-	frontend.RegisterHandler("phony", targets.Target{
-		Name:        "check",
-		Description: "a phony target for a phony test world",
-	}, phonyBuild)
-
-	// Note this is specifically registered under the "debug" namespace.
-	// This should not overwrite the "debug/resolve" target in the base frontend.
-	frontend.RegisterHandler("debug", targets.Target{
-		Name:        "resolve",
-		Description: "a phony resolve target for testing namespaced targets",
-	}, phonyResolve)
-
-	if err := grpcclient.RunFromEnvironment(ctx, frontend.Build); err != nil {
+	if err := grpcclient.RunFromEnvironment(ctx, frontend.NewBuilder(
+		map[string]frontend.FetchHandlersFunc{
+			"phony": getTargets,
+		},
+	)); err != nil {
 		bklog.L.WithError(err).Fatal("error running frontend")
 		os.Exit(137)
 	}
 }
 
-func phonyBuild(ctx context.Context, client gwclient.Client, spec *dalec.Spec) (gwclient.Reference, *image.Image, error) {
+func getTargets(ctx context.Context, client gwclient.Client, targetKey string) ([]*frontend.Target, error) {
+	return []*frontend.Target{
+		{
+			Info: targets.Target{
+				Name:        "check",
+				Description: "a phony target for a phony test world",
+			},
+			Build: phonyBuild,
+		},
+		{
+			Info: targets.Target{
+				Name:        "resolve",
+				Description: "a phony resolve target for testing namespaced targets",
+			},
+			Build: phonyResolve,
+		},
+	}, nil
+}
+
+func phonyBuild(ctx context.Context, client gwclient.Client, spec *dalec.Spec, targetKey string) (gwclient.Reference, *image.Image, error) {
 	def, err := llb.Scratch().File(llb.Mkfile("hello", 0o644, []byte("phony hello"))).Marshal(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -60,7 +71,7 @@ func phonyBuild(ctx context.Context, client gwclient.Client, spec *dalec.Spec) (
 	return ref, &image.Image{}, nil
 }
 
-func phonyResolve(ctx context.Context, client gwclient.Client, spec *dalec.Spec) (gwclient.Reference, *image.Image, error) {
+func phonyResolve(ctx context.Context, client gwclient.Client, spec *dalec.Spec, targetKey string) (gwclient.Reference, *image.Image, error) {
 	def, err := llb.Scratch().File(llb.Mkfile("resolve", 0o644, []byte("phony resolve"))).Marshal(ctx)
 	if err != nil {
 		return nil, nil, err

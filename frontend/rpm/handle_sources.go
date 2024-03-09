@@ -2,7 +2,6 @@ package rpm
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -13,11 +12,6 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"golang.org/x/exp/maps"
 )
-
-// TarImageRef is the image used to create tarballs of sources
-// This is purposefully exported so it can be overridden at compile time if needed.
-// Currently this image needs /bin/sh and tar in $PATH
-var TarImageRef = "busybox:latest"
 
 func shArgs(cmd string) llb.RunOption {
 	return llb.Args([]string{"sh", "-c", cmd})
@@ -41,36 +35,39 @@ func tar(worker, src llb.State, dest string, opts ...llb.ConstraintsOpt) llb.Sta
 	return work.AddMount(outBase, llb.Scratch())
 }
 
-func HandleSources(ctx context.Context, client gwclient.Client, spec *dalec.Spec) (gwclient.Reference, *image.Image, error) {
-	sOpt, err := frontend.SourceOptFromClient(ctx, client)
-	if err != nil {
-		return nil, nil, err
+func HandleSources(getWorker func(opts ...llb.ConstraintsOpt) llb.State) frontend.BuildFunc {
+	return func(ctx context.Context, client gwclient.Client, spec *dalec.Spec, targetKey string) (gwclient.Reference, *image.Image, error) {
+		sOpt, err := frontend.SourceOptFromClient(ctx, client)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		sOpt.GetSourceWorker = getWorker
+		sources, deps, err := Dalec2SourcesLLB(spec, sOpt)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		sources = addDepsToSources(sources, deps)
+
+		// Now we can merge sources into the desired path
+		st := dalec.MergeAtPath(llb.Scratch(), sources, "/SOURCES")
+
+		def, err := st.Marshal(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("error marshalling llb: %w", err)
+		}
+
+		res, err := client.Solve(ctx, gwclient.SolveRequest{
+			Definition: def.ToPB(),
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		ref, err := res.SingleRef()
+		// Do not return a nil image, it may cause a panic
+		return ref, &image.Image{}, err
 	}
-
-	sources, deps, err := Dalec2SourcesLLB(spec, sOpt)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	sources = addDepsToSources(sources, deps)
-
-	// Now we can merge sources into the desired path
-	st := dalec.MergeAtPath(llb.Scratch(), sources, "/SOURCES")
-
-	def, err := st.Marshal(ctx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("error marshalling llb: %w", err)
-	}
-
-	res, err := client.Solve(ctx, gwclient.SolveRequest{
-		Definition: def.ToPB(),
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	ref, err := res.SingleRef()
-	// Do not return a nil image, it may cause a panic
-	return ref, &image.Image{}, err
 }
 
 func Dalec2SourcesLLB(spec *dalec.Spec, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) ([]llb.State, map[string]llb.State, error) {
@@ -79,8 +76,8 @@ func Dalec2SourcesLLB(spec *dalec.Spec, sOpt dalec.SourceOpts, opts ...llb.Const
 	// cache hits for callers of this function.
 	sorted := dalec.SortMapKeys(spec.Sources)
 
-	if sOpt.Worker == nil {
-		return nil, nil, errors.New("worker image for fetching sources not set: this is a bug in the buildkit frontend")
+	if sOpt.GetSourceWorker == nil {
+		sOpt.GetSourceWorker = getDefaultSourceWorker(sOpt.Resolver, spec)
 	}
 
 	out := make([]llb.State, 0, len(spec.Sources))
@@ -93,26 +90,11 @@ func Dalec2SourcesLLB(spec *dalec.Spec, sOpt dalec.SourceOpts, opts ...llb.Const
 			return nil, nil, err
 		}
 
-		s := ""
-		switch {
-		case src.DockerImage != nil:
-			s = src.DockerImage.Ref
-		case src.Git != nil:
-			s = src.Git.URL
-		case src.HTTP != nil:
-			s = src.HTTP.URL
-		case src.Context != nil:
-			s = src.Context.Name
-		case src.Build != nil:
-			s = fmt.Sprintf("%v", src.Build.Source)
-		case src.Inline != nil:
-			s = "inline"
-		default:
-			return nil, nil, fmt.Errorf("no non-nil source provided")
-		}
+		ref := getSourceRef(&src)
+		pg := dalec.ProgressGroup("Add spec source: " + k + " " + ref)
 
-		pg := dalec.ProgressGroup("Add spec source: " + k + " " + s)
-		st, deps, err := src.AsState(k, sOpt, append(opts, pg)...)
+		opts := append(opts, pg)
+		st, deps, err := src.AsState(k, sOpt, opts...)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -132,7 +114,9 @@ func Dalec2SourcesLLB(spec *dalec.Spec, sOpt dalec.SourceOpts, opts ...llb.Const
 		}
 
 		if isDir {
-			out = append(out, tar(*sOpt.Worker, st, k+".tar.gz", append(opts, pg)...))
+			worker := sOpt.GetSourceWorker(opts...)
+			opts = append(opts, dalec.ProgressGroup("Create tarball of source: "+k))
+			out = append(out, tar(worker, st, k+".tar.gz", opts...))
 		} else {
 			out = append(out, st)
 		}
@@ -148,6 +132,29 @@ func Dalec2SourcesLLB(spec *dalec.Spec, sOpt dalec.SourceOpts, opts ...llb.Const
 	return out, depsOut, nil
 }
 
+func getSourceRef(src *dalec.Source) string {
+	s := ""
+	switch {
+	case src.DockerImage != nil:
+		s = src.DockerImage.Ref
+	case src.Git != nil:
+		s = src.Git.URL
+	case src.HTTP != nil:
+		s = src.HTTP.URL
+	case src.Context != nil:
+		s = src.Context.Name
+	case src.Build != nil:
+		s = fmt.Sprintf("%v", src.Build.Source)
+	case src.Gomod != nil:
+		s = "go module: " + getSourceRef(&src.Gomod.From)
+	case src.Inline != nil:
+		s = "inline"
+	default:
+		s = "unknown"
+	}
+	return s
+}
+
 func addDepsToSources(sources []llb.State, deps map[string]llb.State) []llb.State {
 	for k, v := range deps {
 		st := llb.Scratch().File(
@@ -156,4 +163,22 @@ func addDepsToSources(sources []llb.State, deps map[string]llb.State) []llb.Stat
 		sources = append(sources, st)
 	}
 	return sources
+}
+
+func getDefaultSourceWorker(resolver llb.ImageMetaResolver, spec *dalec.Spec) func(opts ...llb.ConstraintsOpt) llb.State {
+	return func(opts ...llb.ConstraintsOpt) llb.State {
+		opt := dalec.WithConstraints(append(opts, dalec.ProgressGroup("No source worker provided, preparing default worker image"))...)
+		return llb.Image("alpine:latest", opt).With(
+			func(in llb.State) llb.State {
+				if !spec.RequiresGo() {
+					return in
+				}
+				return in.Run(
+					shArgs("apk add --update-cache -y ca-certificates git go"),
+					llb.AddMount("/var/cache/apk", llb.Scratch(), llb.AsPersistentCacheDir("dalec-alpine-apk-cache", llb.CacheMountShared)),
+					opt,
+				).Root()
+			},
+		)
+	}
 }

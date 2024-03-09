@@ -12,16 +12,16 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 )
 
-func handleDepsOnly(ctx context.Context, client gwclient.Client, spec *dalec.Spec) (gwclient.Reference, *image.Image, error) {
+func handleDepsOnly(ctx context.Context, client gwclient.Client, spec *dalec.Spec, targetKey string) (gwclient.Reference, *image.Image, error) {
 	sOpt, err := frontend.SourceOptFromClient(ctx, client)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	pg := dalec.ProgressGroup("Build mariner2 deps-only container: " + spec.Name)
-	baseImg := getWorkerImage(sOpt, pg)
+	baseImg := getWorkerImage(client, pg)
 	rpmDir := baseImg.Run(
-		shArgs(`set -ex; dir="/tmp/rpms/RPMS/$(uname -m)"; mkdir -p "${dir}"; tdnf install -y --releasever=2.0 --downloadonly --alldeps --downloaddir "${dir}" `+strings.Join(getRuntimeDeps(spec), " ")),
+		shArgs(`set -ex; dir="/tmp/rpms/RPMS/$(uname -m)"; mkdir -p "${dir}"; tdnf install -y --releasever=2.0 --downloadonly --alldeps --downloaddir "${dir}" `+strings.Join(getRuntimeDeps(spec, targetKey), " ")),
 		defaultTndfCacheMount(),
 		pg,
 	).
@@ -44,7 +44,7 @@ func handleDepsOnly(ctx context.Context, client gwclient.Client, spec *dalec.Spe
 		return nil, nil, err
 	}
 
-	img, err := buildImageConfig(ctx, spec, targetKey, client)
+	img, err := buildImageConfig(ctx, spec, client, targetKey)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -57,7 +57,7 @@ func handleDepsOnly(ctx context.Context, client gwclient.Client, spec *dalec.Spe
 	return ref, img, nil
 }
 
-func getRuntimeDeps(spec *dalec.Spec) []string {
+func getRuntimeDeps(spec *dalec.Spec, targetKey string) []string {
 	var deps *dalec.PackageDependencies
 	if t, ok := spec.Targets[targetKey]; ok {
 		deps = t.Dependencies

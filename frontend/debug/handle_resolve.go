@@ -12,7 +12,7 @@ import (
 )
 
 // HandleResolve is a handler that generates a resolved spec file with all the build args and variables expanded.
-func HandleResolve(ctx context.Context, client gwclient.Client, spec *dalec.Spec) (gwclient.Reference, *image.Image, error) {
+func HandleResolve(ctx context.Context, client gwclient.Client, spec *dalec.Spec, _ string) (gwclient.Reference, *image.Image, error) {
 	dt, err := yaml.Marshal(spec)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error marshalling spec: %w", err)

@@ -14,61 +14,83 @@ import (
 	"github.com/moby/buildkit/exporter/containerimage/image"
 	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 const (
 	marinerDistrolessRef = "mcr.microsoft.com/cbl-mariner/distroless/base:2.0"
 )
 
-func handleContainer(ctx context.Context, client gwclient.Client, spec *dalec.Spec) (gwclient.Reference, *image.Image, error) {
-	sOpt, err := frontend.SourceOptFromClient(ctx, client)
+func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+	dc, err := dockerui.NewClient(client)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	pg := dalec.ProgressGroup("Build mariner2 container: " + spec.Name)
-	baseImg := getWorkerImage(sOpt, pg)
+	rb, err := dc.Build(ctx, func(ctx context.Context, platform *ocispecs.Platform, idx int) (gwclient.Reference, *image.Image, error) {
+		spec, err := frontend.LoadSpec(ctx, dc)
+		if err != nil {
+			return nil, nil, err
+		}
 
-	rpmDir, err := specToRpmLLB(spec, sOpt, pg)
-	if err != nil {
-		return nil, nil, fmt.Errorf("error creating rpm: %w", err)
-	}
+		sOpt, err := frontend.SourceOptFromClient(ctx, client)
+		if err != nil {
+			return nil, nil, err
+		}
 
-	st, err := specToContainerLLB(spec, targetKey, baseImg, rpmDir, sOpt, pg)
-	if err != nil {
-		return nil, nil, err
-	}
+		pg := dalec.ProgressGroup("Build mariner2 container: " + spec.Name)
+		sOpt.GetSourceWorker = func(opts ...llb.ConstraintsOpt) llb.State {
+			return getSourceWorkerFunc(client)(spec, opts...)
+		}
 
-	def, err := st.Marshal(ctx, pg)
-	if err != nil {
-		return nil, nil, fmt.Errorf("error marshalling llb: %w", err)
-	}
+		targetKey := frontend.GetTargetKey(dc)
 
-	res, err := client.Solve(ctx, gwclient.SolveRequest{
-		Definition: def.ToPB(),
+		rpmDir, err := specToRpmLLB(spec, sOpt, targetKey, pg)
+		if err != nil {
+			return nil, nil, fmt.Errorf("error creating rpm: %w", err)
+		}
+
+		st, err := specToContainerLLB(spec, targetKey, getWorkerImage(client, pg), rpmDir, sOpt, pg)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		def, err := st.Marshal(ctx, pg)
+		if err != nil {
+			return nil, nil, fmt.Errorf("error marshalling llb: %w", err)
+		}
+
+		res, err := client.Solve(ctx, gwclient.SolveRequest{
+			Definition: def.ToPB(),
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+
+		img, err := buildImageConfig(ctx, spec, client, targetKey)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		ref, err := res.SingleRef()
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if err := frontend.RunTests(ctx, client, spec, ref, targetKey); err != nil {
+			return nil, nil, err
+		}
+
+		return ref, img, err
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	img, err := buildImageConfig(ctx, spec, targetKey, client)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	ref, err := res.SingleRef()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if err := frontend.RunTests(ctx, client, spec, ref, targetKey); err != nil {
-		return nil, nil, err
-	}
-
-	return ref, img, err
+	return rb.Finalize()
 }
 
-func buildImageConfig(ctx context.Context, spec *dalec.Spec, target string, client gwclient.Client) (*image.Image, error) {
+func buildImageConfig(ctx context.Context, spec *dalec.Spec, client gwclient.Client, targetKey string) (*image.Image, error) {
 	dc, err := dockerui.NewClient(client)
 	if err != nil {
 		return nil, err
@@ -96,20 +118,20 @@ func buildImageConfig(ctx context.Context, spec *dalec.Spec, target string, clie
 	return &img, nil
 }
 
-func mergeSpecImage(spec *dalec.Spec, target string) *dalec.ImageConfig {
+func mergeSpecImage(spec *dalec.Spec, targetKey string) *dalec.ImageConfig {
 	var cfg dalec.ImageConfig
 
 	if spec.Image != nil {
 		cfg = *spec.Image
 	}
 
-	if i := spec.Targets[target].Image; i != nil {
+	if i := spec.Targets[targetKey].Image; i != nil {
 		if i.Entrypoint != "" {
-			cfg.Entrypoint = spec.Targets[target].Image.Entrypoint
+			cfg.Entrypoint = spec.Targets[targetKey].Image.Entrypoint
 		}
 
 		if i.Cmd != "" {
-			cfg.Cmd = spec.Targets[target].Image.Cmd
+			cfg.Cmd = spec.Targets[targetKey].Image.Cmd
 		}
 
 		cfg.Env = append(cfg.Env, i.Env...)

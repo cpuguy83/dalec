@@ -449,6 +449,9 @@
 				"inline": {
 					"$ref": "#/$defs/SourceInline"
 				},
+				"gomod": {
+					"$ref": "#/$defs/SourceGoModule"
+				},
 				"path": {
 					"type": "string",
 					"description": "Path is the path to the source after fetching it based on the identifier."
@@ -550,6 +553,20 @@
 				"commit",
 				"keepGitDir"
 			]
+		},
+		"SourceGoModule": {
+			"properties": {
+				"from": {
+					"$ref": "#/$defs/Source",
+					"description": "From is the source to download the main go module from\nOnce the main module is fetched, the dependencies will be fetched from the normal go module resolution"
+				}
+			},
+			"additionalProperties": false,
+			"type": "object",
+			"required": [
+				"from"
+			],
+			"description": "SourceGoModule is a source type that represents a go module."
 		},
 		"SourceHTTP": {
 			"properties": {

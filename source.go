@@ -67,10 +67,7 @@ func getSource(src Source, name string, sOpt SourceOpts, opts ...llb.Constraints
 	case src.Inline != nil:
 		st, err = src.Inline.AsState(name)
 	case src.Gomod != nil:
-		if sOpt.Worker == nil {
-			return llb.Scratch(), nil, errNoGoWorker
-		}
-		mod, mods, err := src.Gomod.AsState(*sOpt.Worker, opts...)
+		mod, mods, err := src.Gomod.AsState(name, sOpt, opts...)
 		if err != nil {
 			return llb.Scratch(), nil, err
 		}
@@ -183,10 +180,11 @@ type LLBGetter func(sOpts SourceOpts, opts ...llb.ConstraintsOpt) (llb.State, er
 type ForwarderFunc func(llb.State, *SourceBuild) (llb.State, error)
 
 type SourceOpts struct {
-	Resolver   llb.ImageMetaResolver
-	Forward    ForwarderFunc
-	GetContext func(string, ...llb.LocalOption) (*llb.State, error)
-	Worker     *llb.State
+	Resolver        llb.ImageMetaResolver
+	Forward         ForwarderFunc
+	GetContext      func(string, ...llb.LocalOption) (*llb.State, error)
+	GetSourceWorker func(opts ...llb.ConstraintsOpt) llb.State
+	ReadFile        func(llb.State, string) ([]byte, error)
 }
 
 func shArgs(cmd string) llb.RunOption {
@@ -329,7 +327,8 @@ func SourceIsDir(src Source) (bool, error) {
 	case src.DockerImage != nil,
 		src.Git != nil,
 		src.Build != nil,
-		src.Context != nil:
+		src.Context != nil,
+		src.Gomod != nil:
 		return true, nil
 	case src.HTTP != nil:
 		return false, nil

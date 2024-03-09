@@ -66,18 +66,6 @@ func (s *Source) substituteBuildArgs(args map[string]string) error {
 			return err
 		}
 		s.Git.Commit = updated
-	case s.Gomod != nil:
-		updated, err := lex.ProcessWordWithMap(s.Gomod.URL, args)
-		if err != nil {
-			return err
-		}
-		s.Gomod.URL = updated
-
-		updated, err = lex.ProcessWordWithMap(s.Gomod.Commit, args)
-		if err != nil {
-			return err
-		}
-		s.Gomod.Commit = updated
 	case s.HTTP != nil:
 		updated, err := lex.ProcessWordWithMap(s.HTTP.URL, args)
 		if err != nil {
@@ -106,6 +94,11 @@ func (s *Source) substituteBuildArgs(args map[string]string) error {
 			return err
 		}
 		s.Build.Target = updated
+	case s.Gomod != nil:
+		f := &s.Gomod.From
+		if err := f.substituteBuildArgs(args); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -128,6 +121,8 @@ func fillDefaults(s *Source) {
 	case s.Build != nil:
 		fillDefaults(&s.Build.Source)
 	case s.Inline != nil:
+	case s.Gomod != nil:
+		fillDefaults(&s.Gomod.From)
 	}
 }
 
