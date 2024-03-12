@@ -72,38 +72,6 @@ func SubstitutePlatformArgs(spec *dalec.Spec, bp, tp *ocispecs.Platform, args ma
 	return nil
 }
 
-// func doBuild(ctx context.Context, client gwclient.Client, dc *dockerui.Client, spec *dalec.Spec, bf BuildFunc) (*gwclient.Result, error) {
-// 	rb, err := dc.Build(ctx, func(ctx context.Context, platform *ocispecs.Platform, idx int) (gwclient.Reference, *image.Image, error) {
-// 		var targetPlatform, buildPlatform ocispecs.Platform
-// 		if platform != nil {
-// 			targetPlatform = *platform
-// 		} else {
-// 			targetPlatform = platforms.DefaultSpec()
-// 		}
-//
-// 		// the dockerui client, given the current implementation, should only ever have
-// 		// a single build platform
-// 		if len(dc.BuildPlatforms) != 1 {
-// 			return nil, nil, fmt.Errorf("expected exactly one build platform, got %d", len(dc.BuildPlatforms))
-// 		}
-// 		buildPlatform = dc.BuildPlatforms[0]
-//
-// 		args := dalec.DuplicateMap(dc.BuildArgs)
-// 		fillPlatformArgs("TARGET", args, targetPlatform)
-// 		fillPlatformArgs("BUILD", args, buildPlatform)
-// 		if err := spec.SubstituteArgs(args); err != nil {
-// 			return nil, nil, err
-// 		}
-//
-// 		return bf(ctx, client, spec, targetKey)
-// 	})
-// 	if err != nil {
-// 		return nil, err
-// 	}
-//
-// 	return rb.Finalize()
-// }
-
 type PlatformBuildFunc func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *image.Image, error)
 
 // BuildWithPlatform is a helper function to build a spec with a given platform
