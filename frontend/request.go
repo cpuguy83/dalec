@@ -10,7 +10,6 @@ import (
 	"github.com/moby/buildkit/frontend/dockerfile/parser"
 	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/moby/buildkit/solver/pb"
 	"github.com/pkg/errors"
 )
@@ -147,12 +146,4 @@ func withDalecTargetKey(t string) solveRequestOpt {
 		req.FrontendOpt[keyTargetOpt] = t
 		return nil
 	}
-}
-
-func HandleListTargets(ctx context.Context, client gwclient.Client, targets bktargets.List) (*gwclient.Result, bool, error) {
-	if GetSubrequest(client) != bktargets.SubrequestsTargetsDefinition.Name {
-		return nil, false, nil
-	}
-	res, err := targets.ToResult()
-	return res, true, err
 }

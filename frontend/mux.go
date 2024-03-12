@@ -294,7 +294,3 @@ func trimTargetOpt(client gwclient.Client, prefix string) gwclient.Client {
 func (d *clientWithCustomOpts) BuildOpts() gwclient.BuildOpts {
 	return d.opts
 }
-
-func GetSubrequest(client BuildOpstGetter) string {
-	return client.BuildOpts().Opts[requestIDKey]
-}
