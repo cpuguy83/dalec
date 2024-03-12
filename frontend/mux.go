@@ -169,16 +169,6 @@ func (m *RouteMux) lookupTarget(target string) (matchedPattern string, _ *handle
 	return "", nil, handlerNotFound(target, maps.Keys(m.handlers))
 }
 
-// Set an explicit default handler
-// This is used when handling a request with an empty target and no other default handler was set on the target info.
-func (m *RouteMux) Default(target string) {
-	h, ok := m.handlers[target]
-	if !ok {
-		panic("no handler for target " + target)
-	}
-	m.defaultH = &h
-}
-
 func (m *RouteMux) Handle(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 	// Cache the opts in case this is the raw client
 	// This prevents a grpc request for multiple calls to BuildOpts
