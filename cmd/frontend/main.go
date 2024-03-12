@@ -25,11 +25,14 @@ func main() {
 
 	ctx := appcontext.Context()
 
-	builtins := map[string]frontend.FetchHandlersFunc{
-		mariner2.DefaultTargetKey: mariner2.Handlers,
-		"debug":                   debug.Handlers,
-	}
-	if err := grpcclient.RunFromEnvironment(ctx, frontend.NewBuilder(builtins)); err != nil {
+	var mux frontend.RouteMux
+
+	mux.Add(debug.DebugRoute, debug.Handle, nil)
+
+	mux.Add(mariner2.DefaultTargetKey, mariner2.Handle, nil)
+	mux.Default(mariner2.DefaultTargetKey)
+
+	if err := grpcclient.RunFromEnvironment(ctx, mux.Handle); err != nil {
 		bklog.L.WithError(err).Fatal("error running frontend")
 		os.Exit(137)
 	}

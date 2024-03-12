@@ -21,6 +21,12 @@ const (
 	marinerDistrolessRef = "mcr.microsoft.com/cbl-mariner/distroless/base:2.0"
 )
 
+func containerHandler(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+	var mux frontend.RouteMux
+
+	return mux.Handle(ctx, client)
+}
+
 func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 	dc, err := dockerui.NewClient(client)
 	if err != nil {

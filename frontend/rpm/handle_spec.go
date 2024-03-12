@@ -8,31 +8,44 @@ import (
 	"runtime/debug"
 
 	"github.com/Azure/dalec"
+	"github.com/Azure/dalec/frontend"
 	"github.com/moby/buildkit/client/llb"
-	"github.com/moby/buildkit/exporter/containerimage/image"
+	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 )
 
-func SpecHandler(ctx context.Context, client gwclient.Client, spec *dalec.Spec, targetKey string) (gwclient.Reference, *image.Image, error) {
+func SpecHandler(ctx context.Context, client gwclient.Client, spec *dalec.Spec, targetKey string) (*gwclient.Result, error) {
 	st, err := Dalec2SpecLLB(spec, llb.Scratch(), targetKey, "")
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	def, err := st.Marshal(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error marshalling llb: %w", err)
+		return nil, fmt.Errorf("error marshalling llb: %w", err)
 	}
 
-	res, err := client.Solve(ctx, gwclient.SolveRequest{
+	return client.Solve(ctx, gwclient.SolveRequest{
 		Definition: def.ToPB(),
 	})
-	if err != nil {
-		return nil, nil, err
+}
+
+func HandleSpec(getWorker WorkerFunc) frontend.BuildFuncRedux {
+	return func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+		dc, err := dockerui.NewClient(client)
+		if err != nil {
+			return nil, err
+		}
+
+		spec, err := frontend.LoadSpec(ctx, dc)
+		if err != nil {
+			return nil, err
+		}
+
+		targetKey := frontend.GetTargetKey(dc)
+		return SpecHandler(ctx, client, spec, targetKey)
 	}
-	ref, err := res.SingleRef()
-	// Do not return a nil image, it may cause a panic
-	return ref, &image.Image{}, err
+
 }
 
 func Dalec2SpecLLB(spec *dalec.Spec, in llb.State, targetKey, dir string, opts ...llb.ConstraintsOpt) (llb.State, error) {

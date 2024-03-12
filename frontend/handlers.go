@@ -16,6 +16,8 @@ import (
 
 type BuildFunc func(ctx context.Context, client gwclient.Client, spec *dalec.Spec, targetKey string) (gwclient.Reference, *image.Image, error)
 
+type FetchHandlersFunc func(ctx context.Context, client gwclient.Client, targetKey string) ([]*Target, error)
+
 type Target struct {
 	Info  bktargets.Target
 	Build BuildFunc

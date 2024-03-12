@@ -14,6 +14,7 @@ import (
 	"github.com/moby/buildkit/exporter/containerimage/image"
 	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -32,6 +33,18 @@ func tdnfCacheMountWithPrefix(prefix string) llb.RunOption {
 	// note: We are using CacheMountLocked here because without it, while there are concurrent builds happening, tdnf exits with a lock error.
 	// dnf is supposed to wait for locks, but it seems like that is not happening with tdnf.
 	return llb.AddMount(filepath.Join(prefix, tdnfCacheDir), llb.Scratch(), llb.AsPersistentCacheDir(tdnfCacheName, llb.CacheMountLocked))
+}
+
+func rpmHandler(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+	var mux frontend.RouteMux
+	mux.Add("", handleRPM, &bktargets.Target{
+		Name:        "",
+		Description: "Builds an rpm and src.rpm for mariner2.",
+	})
+
+	mux.Add("debug", rpm.HandleDebug(getSourceWorkerFunc(client)), nil)
+
+	return mux.Handle(ctx, client)
 }
 
 func handleRPM(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {

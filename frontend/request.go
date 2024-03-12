@@ -10,8 +10,7 @@ import (
 	"github.com/moby/buildkit/frontend/dockerfile/parser"
 	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	"github.com/moby/buildkit/frontend/subrequests"
-	"github.com/moby/buildkit/frontend/subrequests/outline"
+	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
 	"github.com/moby/buildkit/solver/pb"
 	"github.com/pkg/errors"
 )
@@ -150,65 +149,10 @@ func withDalecTargetKey(t string) solveRequestOpt {
 	}
 }
 
-type BuildFuncRedux func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error)
-
-type RouteMux struct {
-	handlers map[string]BuildFuncRedux
-}
-
-func (m *RouteMux) Add(targetKey string, bf BuildFuncRedux) {
-	if m.handlers == nil {
-		m.handlers = make(map[string]BuildFuncRedux)
-	}
-	m.handlers[targetKey] = bf
-}
-
-const KeyTarget = "target"
-
-func (m *RouteMux) Handle(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-	root, _, _ := strings.Cut(client.BuildOpts().Opts[KeyTarget], "/")
-	h, ok := m.handlers[root]
-	if !ok {
-		return nil, errors.Errorf("no handler found for target %q", root)
-	}
-
-	res, err := h(ctx, client)
-	if err != nil {
-		return nil, errors.Wrap(err, "error building target "+root)
-	}
-}
-
-type clientWithCustomOpts struct {
-	opts gwclient.BuildOpts
-	gwclient.Client
-}
-
-func (d *clientWithCustomOpts) BuildOpts() gwclient.BuildOpts {
-	return d.opts
-}
-
-func trimBuildTarget(client gwclient.Client, prefix string) gwclient.Client {
-	opts := client.BuildOpts()
-	opts.Opts[KeyTarget] = strings.TrimPrefix(opts.Opts[KeyTarget], prefix)
-	return &clientWithCustomOpts{
-		Client: client,
-		opts:   opts,
-	}
-}
-
-func GetSubrequest(client BuildOpstGetter) string {
-	return client.BuildOpts().Opts[requestIDKey]
-}
-
-func HandleSubrequest(client BuildOpstGetter) (*gwclient.Result, bool, error) {
-	req, ok := client.BuildOpts().Opts[requestIDKey]
-	if !ok {
+func HandleListTargets(ctx context.Context, client gwclient.Client, targets bktargets.List) (*gwclient.Result, bool, error) {
+	if GetSubrequest(client) != bktargets.SubrequestsTargetsDefinition.Name {
 		return nil, false, nil
 	}
-	switch req {
-	case subrequests.RequestSubrequestsDescribe:
-		res, err := describe(client)
-		return res, true, err
-	case outline.SubrequestsOutlineDefinition.Name:
-	}
+	res, err := targets.ToResult()
+	return res, true, err
 }

@@ -8,7 +8,7 @@ import (
 	"github.com/Azure/dalec"
 	"github.com/Azure/dalec/frontend"
 	"github.com/moby/buildkit/client/llb"
-	"github.com/moby/buildkit/exporter/containerimage/image"
+	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"golang.org/x/exp/maps"
 )
@@ -35,17 +35,29 @@ func tar(worker, src llb.State, dest string, opts ...llb.ConstraintsOpt) llb.Sta
 	return work.AddMount(outBase, llb.Scratch())
 }
 
-func HandleSources(getWorker func(opts ...llb.ConstraintsOpt) llb.State) frontend.BuildFunc {
-	return func(ctx context.Context, client gwclient.Client, spec *dalec.Spec, targetKey string) (gwclient.Reference, *image.Image, error) {
-		sOpt, err := frontend.SourceOptFromClient(ctx, client)
+func HandleSources(getWorker WorkerFunc) frontend.BuildFuncRedux {
+	return func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+		dc, err := dockerui.NewClient(client)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 
-		sOpt.GetSourceWorker = getWorker
+		sOpt, err := frontend.SourceOptFromClient(ctx, client)
+		if err != nil {
+			return nil, err
+		}
+
+		spec, err := frontend.LoadSpec(ctx, dc)
+		if err != nil {
+			return nil, err
+		}
+
+		sOpt.GetSourceWorker = func(opts ...llb.ConstraintsOpt) llb.State {
+			return getWorker(spec, opts...)
+		}
 		sources, deps, err := Dalec2SourcesLLB(spec, sOpt)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 
 		sources = addDepsToSources(sources, deps)
@@ -55,18 +67,12 @@ func HandleSources(getWorker func(opts ...llb.ConstraintsOpt) llb.State) fronten
 
 		def, err := st.Marshal(ctx)
 		if err != nil {
-			return nil, nil, fmt.Errorf("error marshalling llb: %w", err)
+			return nil, fmt.Errorf("error marshalling llb: %w", err)
 		}
 
-		res, err := client.Solve(ctx, gwclient.SolveRequest{
+		return client.Solve(ctx, gwclient.SolveRequest{
 			Definition: def.ToPB(),
 		})
-		if err != nil {
-			return nil, nil, err
-		}
-		ref, err := res.SingleRef()
-		// Do not return a nil image, it may cause a panic
-		return ref, &image.Image{}, err
 	}
 }
 

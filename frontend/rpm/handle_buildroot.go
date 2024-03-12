@@ -13,7 +13,7 @@ import (
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
-func BuildrootHandler(getWorker func(spec *dalec.Spec, opts ...llb.ConstraintsOpt) llb.State) frontend.BuildFuncRedux {
+func HandleBuildroot(getWorker WorkerFunc) frontend.BuildFuncRedux {
 	return func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 		dc, err := dockerui.NewClient(client)
 		if err != nil {

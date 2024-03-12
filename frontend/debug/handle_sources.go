@@ -7,6 +7,7 @@ import (
 	"github.com/Azure/dalec/frontend"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/image"
+	"github.com/moby/buildkit/frontend/dockerui"
 	"github.com/moby/buildkit/frontend/gateway/client"
 )
 
@@ -46,4 +47,43 @@ func HandleSources(ctx context.Context, gwc client.Client, spec *dalec.Spec, _ s
 		return nil, nil, err
 	}
 	return ref, &image.Image{}, nil
+}
+
+func Sources(ctx context.Context, gwc client.Client) (*client.Result, error) {
+	dc, err := dockerui.NewClient(gwc)
+	if err != nil {
+		return nil, err
+	}
+
+	spec, err := frontend.LoadSpec(ctx, dc)
+	if err != nil {
+		return nil, err
+	}
+
+	sOpt, err := frontend.SourceOptFromClient(ctx, gwc)
+	if err != nil {
+		return nil, err
+	}
+
+	sources := make([]llb.State, 0, len(spec.Sources))
+	for name, src := range spec.Sources {
+		st, deps, err := src.AsState(name, sOpt)
+		if err != nil {
+			return nil, err
+		}
+		sources = append(sources, st)
+
+		if len(deps) > 0 {
+
+		}
+	}
+
+	def, err := dalec.MergeAtPath(llb.Scratch(), sources, "/").Marshal(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return gwc.Solve(ctx, client.SolveRequest{
+		Definition: def.ToPB(),
+	})
 }
