@@ -43,7 +43,7 @@ func (m *RouteMux) Add(targetKey string, bf BuildFuncRedux, info *bktargets.Targ
 
 const KeyTarget = "target"
 
-// describe returns th subrequests that are supported
+// describe returns the subrequests that are supported
 func (m *RouteMux) describe() (*gwclient.Result, error) {
 	subs := []subrequests.Request{bktargets.SubrequestsTargetsDefinition, subrequests.SubrequestsDescribeDefinition}
 
