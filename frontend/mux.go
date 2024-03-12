@@ -9,12 +9,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/moby/buildkit/exporter/containerimage/image"
-	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/frontend/subrequests"
 	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
-	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 	"golang.org/x/exp/maps"
 )
@@ -310,37 +307,4 @@ func (d *clientWithCustomOpts) BuildOpts() gwclient.BuildOpts {
 
 func GetSubrequest(client BuildOpstGetter) string {
 	return client.BuildOpts().Opts[requestIDKey]
-}
-
-func Build(r *RouteMux) gwclient.BuildFunc {
-	return func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-		dc, err := dockerui.NewClient(client)
-		if err != nil {
-			return nil, err
-		}
-
-		rb, err := dc.Build(ctx, func(ctx context.Context, platform *ocispecs.Platform, idx int) (gwclient.Reference, *image.Image, error) {
-			spec, err := LoadSpec(ctx, dc)
-			if err != nil {
-				return nil, nil, err
-			}
-
-			if err := SubstitutePlatformArgs(spec, &dc.BuildPlatforms[0], platform, spec.Args); err != nil {
-				return nil, nil, err
-			}
-
-			res, err := r.Handle(ctx, client)
-			if err != nil {
-				return nil, nil, err
-			}
-
-			ref, err := res.SingleRef()
-			if err != nil {
-				return nil, nil, err
-			}
-
-			panic("this is broken")
-			return ref, nil, nil
-		})
-	}
 }

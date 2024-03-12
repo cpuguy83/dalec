@@ -9,34 +9,12 @@ import (
 	"github.com/Azure/dalec/frontend"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/image"
-	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 func handleDepsOnly(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-	dc, err := dockerui.NewClient(client)
-	if err != nil {
-		return nil, err
-	}
-
-	rb, err := dc.Build(ctx, func(ctx context.Context, platform *ocispecs.Platform, idx int) (gwclient.Reference, *image.Image, error) {
-		spec, err := frontend.LoadSpec(ctx, dc)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		if err := frontend.SubstitutePlatformArgs(spec, &dc.BuildPlatforms[0], platform, spec.Args); err != nil {
-			return nil, nil, err
-		}
-
-		sOpt, err := frontend.SourceOptFromClient(ctx, client)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		targetKey := frontend.GetTargetKey(dc)
-
+	return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *image.Image, error) {
 		pg := dalec.ProgressGroup("Build mariner2 deps-only container: " + spec.Name)
 		baseImg := getWorkerImage(client, pg)
 		rpmDir := baseImg.Run(
@@ -46,6 +24,10 @@ func handleDepsOnly(ctx context.Context, client gwclient.Client) (*gwclient.Resu
 		).
 			AddMount("/tmp/rpms", llb.Scratch())
 
+		sOpt, err := frontend.SourceOptFromClient(ctx, client)
+		if err != nil {
+			return nil, nil, err
+		}
 		st, err := specToContainerLLB(spec, targetKey, baseImg, rpmDir, sOpt, pg)
 		if err != nil {
 			return nil, nil, err
@@ -75,11 +57,6 @@ func handleDepsOnly(ctx context.Context, client gwclient.Client) (*gwclient.Resu
 
 		return ref, img, nil
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	return rb.Finalize()
 }
 
 func getRuntimeDeps(spec *dalec.Spec, targetKey string) []string {

@@ -10,8 +10,9 @@ import (
 	"github.com/Azure/dalec"
 	"github.com/Azure/dalec/frontend"
 	"github.com/moby/buildkit/client/llb"
-	"github.com/moby/buildkit/frontend/dockerui"
+	"github.com/moby/buildkit/exporter/containerimage/image"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 func SpecHandler(ctx context.Context, client gwclient.Client, spec *dalec.Spec, targetKey string) (*gwclient.Result, error) {
@@ -32,18 +33,14 @@ func SpecHandler(ctx context.Context, client gwclient.Client, spec *dalec.Spec, 
 
 func HandleSpec(getWorker WorkerFunc) frontend.BuildFuncRedux {
 	return func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-		dc, err := dockerui.NewClient(client)
-		if err != nil {
-			return nil, err
-		}
-
-		spec, err := frontend.LoadSpec(ctx, dc)
-		if err != nil {
-			return nil, err
-		}
-
-		targetKey := frontend.GetTargetKey(dc)
-		return SpecHandler(ctx, client, spec, targetKey)
+		return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *image.Image, error) {
+			res, err := SpecHandler(ctx, client, spec, targetKey)
+			if err != nil {
+				return nil, nil, err
+			}
+			ref, err := res.SingleRef()
+			return ref, nil, err
+		})
 	}
 
 }

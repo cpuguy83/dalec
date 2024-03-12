@@ -4,10 +4,8 @@ import (
 	"context"
 	"os"
 
-	"github.com/Azure/dalec"
 	"github.com/Azure/dalec/frontend"
 	"github.com/moby/buildkit/client/llb"
-	"github.com/moby/buildkit/exporter/containerimage/image"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/frontend/gateway/grpcclient"
 	"github.com/moby/buildkit/frontend/subrequests/targets"
@@ -23,68 +21,40 @@ func main() {
 
 	ctx := appcontext.Context()
 
-	if err := grpcclient.RunFromEnvironment(ctx, frontend.NewBuilder(
-		map[string]frontend.FetchHandlersFunc{
-			"phony": getTargets,
-		},
-	)); err != nil {
+	var mux frontend.RouteMux
+
+	mux.Add("check", phonyBuild, &targets.Target{
+		Name:        "check",
+		Description: "a phony target for a phony test world",
+	})
+	mux.Add("resolve", phonyResolve, &targets.Target{
+		Name:        "resolve",
+		Description: "a phony resolve target for testing namespaced targets",
+	})
+
+	if err := grpcclient.RunFromEnvironment(ctx, mux.Handle); err != nil {
 		bklog.L.WithError(err).Fatal("error running frontend")
 		os.Exit(137)
 	}
 }
 
-func getTargets(ctx context.Context, client gwclient.Client, targetKey string) ([]*frontend.Target, error) {
-	return []*frontend.Target{
-		{
-			Info: targets.Target{
-				Name:        "check",
-				Description: "a phony target for a phony test world",
-			},
-			Build: phonyBuild,
-		},
-		{
-			Info: targets.Target{
-				Name:        "resolve",
-				Description: "a phony resolve target for testing namespaced targets",
-			},
-			Build: phonyResolve,
-		},
-	}, nil
-}
-
-func phonyBuild(ctx context.Context, client gwclient.Client, spec *dalec.Spec, targetKey string) (gwclient.Reference, *image.Image, error) {
+func phonyBuild(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 	def, err := llb.Scratch().File(llb.Mkfile("hello", 0o644, []byte("phony hello"))).Marshal(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	res, err := client.Solve(ctx, gwclient.SolveRequest{
+	return client.Solve(ctx, gwclient.SolveRequest{
 		Definition: def.ToPB(),
 	})
-	if err != nil {
-		return nil, nil, err
-	}
-	ref, err := res.SingleRef()
-	if err != nil {
-		return nil, nil, err
-	}
-	return ref, &image.Image{}, nil
 }
 
-func phonyResolve(ctx context.Context, client gwclient.Client, spec *dalec.Spec, targetKey string) (gwclient.Reference, *image.Image, error) {
+func phonyResolve(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 	def, err := llb.Scratch().File(llb.Mkfile("resolve", 0o644, []byte("phony resolve"))).Marshal(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	res, err := client.Solve(ctx, gwclient.SolveRequest{
+	return client.Solve(ctx, gwclient.SolveRequest{
 		Definition: def.ToPB(),
 	})
-	if err != nil {
-		return nil, nil, err
-	}
-	ref, err := res.SingleRef()
-	if err != nil {
-		return nil, nil, err
-	}
-	return ref, &image.Image{}, nil
 }

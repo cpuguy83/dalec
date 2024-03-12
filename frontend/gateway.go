@@ -119,7 +119,7 @@ func GetBuildArg(client gwclient.Client, k string) (string, bool) {
 	return "", false
 }
 
-func makeTargetForwarder(frontend *dalec.Frontend, bkt bktargets.Target, targetKey string) BuildFunc {
+func makeTargetForwarder(frontend *dalec.Frontend, bkt bktargets.Target) BuildFunc {
 	return func(ctx context.Context, client gwclient.Client, spec *dalec.Spec, targetKey string) (gwclient.Reference, *image.Image, error) {
 		req, err := newSolveRequest(
 			withSpec(ctx, spec, dalec.ProgressGroup("prepare spec to forward to frontend")),

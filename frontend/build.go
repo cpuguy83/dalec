@@ -7,7 +7,9 @@ import (
 
 	"github.com/Azure/dalec"
 	"github.com/containerd/containerd/platforms"
+	"github.com/moby/buildkit/exporter/containerimage/image"
 	"github.com/moby/buildkit/frontend/dockerui"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -101,3 +103,34 @@ func SubstitutePlatformArgs(spec *dalec.Spec, bp, tp *ocispecs.Platform, args ma
 //
 // 	return rb.Finalize()
 // }
+
+type PlatformBuildFunc func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *image.Image, error)
+
+// BuildWithPlatform is a helper function to build a spec with a given platform
+// It takes care of looping through each tarrget platform and executing the build with the platform args substituted in the spec.
+// This also deals with the docker-style multi-platform output.
+func BuildWithPlatform(ctx context.Context, client gwclient.Client, f PlatformBuildFunc) (*gwclient.Result, error) {
+	dc, err := dockerui.NewClient(client)
+	if err != nil {
+		return nil, err
+	}
+
+	rb, err := dc.Build(ctx, func(ctx context.Context, platform *ocispecs.Platform, idx int) (gwclient.Reference, *image.Image, error) {
+		spec, err := LoadSpec(ctx, dc)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if err := SubstitutePlatformArgs(spec, &dc.BuildPlatforms[0], platform, spec.Args); err != nil {
+			return nil, nil, err
+		}
+
+		targetKey := GetTargetKey(dc)
+
+		return f(ctx, client, platform, spec, targetKey)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return rb.Finalize()
+}

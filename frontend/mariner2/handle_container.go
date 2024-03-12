@@ -21,24 +21,8 @@ const (
 	marinerDistrolessRef = "mcr.microsoft.com/cbl-mariner/distroless/base:2.0"
 )
 
-func containerHandler(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-	var mux frontend.RouteMux
-
-	return mux.Handle(ctx, client)
-}
-
 func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-	dc, err := dockerui.NewClient(client)
-	if err != nil {
-		return nil, err
-	}
-
-	rb, err := dc.Build(ctx, func(ctx context.Context, platform *ocispecs.Platform, idx int) (gwclient.Reference, *image.Image, error) {
-		spec, err := frontend.LoadSpec(ctx, dc)
-		if err != nil {
-			return nil, nil, err
-		}
-
+	return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *image.Image, error) {
 		sOpt, err := frontend.SourceOptFromClient(ctx, client)
 		if err != nil {
 			return nil, nil, err
@@ -48,8 +32,6 @@ func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Res
 		sOpt.GetSourceWorker = func(opts ...llb.ConstraintsOpt) llb.State {
 			return getSourceWorkerFunc(client)(spec, opts...)
 		}
-
-		targetKey := frontend.GetTargetKey(dc)
 
 		rpmDir, err := specToRpmLLB(spec, sOpt, targetKey, pg)
 		if err != nil {
@@ -89,11 +71,6 @@ func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Res
 
 		return ref, img, err
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	return rb.Finalize()
 }
 
 func buildImageConfig(ctx context.Context, spec *dalec.Spec, client gwclient.Client, targetKey string) (*image.Image, error) {

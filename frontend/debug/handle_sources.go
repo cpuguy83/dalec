@@ -7,8 +7,9 @@ import (
 	"github.com/Azure/dalec/frontend"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/image"
-	"github.com/moby/buildkit/frontend/dockerui"
 	"github.com/moby/buildkit/frontend/gateway/client"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 // HandleSources is a handler that outputs all the sources.
@@ -46,44 +47,45 @@ func HandleSources(ctx context.Context, gwc client.Client, spec *dalec.Spec, _ s
 	if err != nil {
 		return nil, nil, err
 	}
-	return ref, &image.Image{}, nil
+	return ref, nil, nil
 }
 
-func Sources(ctx context.Context, gwc client.Client) (*client.Result, error) {
-	dc, err := dockerui.NewClient(gwc)
-	if err != nil {
-		return nil, err
-	}
-
-	spec, err := frontend.LoadSpec(ctx, dc)
-	if err != nil {
-		return nil, err
-	}
-
-	sOpt, err := frontend.SourceOptFromClient(ctx, gwc)
-	if err != nil {
-		return nil, err
-	}
-
-	sources := make([]llb.State, 0, len(spec.Sources))
-	for name, src := range spec.Sources {
-		st, deps, err := src.AsState(name, sOpt)
+func Sources(ctx context.Context, client gwclient.Client) (*client.Result, error) {
+	return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *image.Image, error) {
+		sOpt, err := frontend.SourceOptFromClient(ctx, client)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		sources = append(sources, st)
 
-		if len(deps) > 0 {
+		sources := make([]llb.State, 0, len(spec.Sources))
+		for name, src := range spec.Sources {
+			st, deps, err := src.AsState(name, sOpt)
+			if err != nil {
+				return nil, nil, err
+			}
+			sources = append(sources, st)
 
+			if len(deps) > 0 {
+
+			}
 		}
-	}
 
-	def, err := dalec.MergeAtPath(llb.Scratch(), sources, "/").Marshal(ctx)
-	if err != nil {
-		return nil, err
-	}
+		def, err := dalec.MergeAtPath(llb.Scratch(), sources, "/").Marshal(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
 
-	return gwc.Solve(ctx, client.SolveRequest{
-		Definition: def.ToPB(),
+		res, err := client.Solve(ctx, gwclient.SolveRequest{
+			Definition: def.ToPB(),
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+
+		ref, err := res.SingleRef()
+		if err != nil {
+			return nil, nil, err
+		}
+		return ref, nil, nil
 	})
 }

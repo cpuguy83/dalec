@@ -8,25 +8,14 @@ import (
 	"github.com/Azure/dalec/frontend"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/image"
-	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 func HandleBuildroot(getWorker WorkerFunc) frontend.BuildFuncRedux {
 	return func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-		dc, err := dockerui.NewClient(client)
-		if err != nil {
-			return nil, err
-		}
-
-		rb, err := dc.Build(ctx, func(ctx context.Context, platform *ocispecs.Platform, idx int) (gwclient.Reference, *image.Image, error) {
+		return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *image.Image, error) {
 			sOpt, err := frontend.SourceOptFromClient(ctx, client)
-			if err != nil {
-				return nil, nil, err
-			}
-
-			spec, err := frontend.LoadSpec(ctx, dc)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -35,7 +24,6 @@ func HandleBuildroot(getWorker WorkerFunc) frontend.BuildFuncRedux {
 				return getWorker(spec, opts...)
 			}
 
-			targetKey := frontend.GetTargetKey(dc)
 			st, err := SpecToBuildrootLLB(spec, sOpt, targetKey)
 			if err != nil {
 				return nil, nil, err
@@ -60,11 +48,6 @@ func HandleBuildroot(getWorker WorkerFunc) frontend.BuildFuncRedux {
 
 			return ref, nil, nil
 		})
-
-		if err != nil {
-			return nil, err
-		}
-		return rb.Finalize()
 	}
 }
 

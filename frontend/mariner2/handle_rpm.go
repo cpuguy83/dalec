@@ -12,9 +12,7 @@ import (
 	"github.com/Azure/dalec/frontend/rpm"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/image"
-	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	bktargets "github.com/moby/buildkit/frontend/subrequests/targets"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -35,44 +33,19 @@ func tdnfCacheMountWithPrefix(prefix string) llb.RunOption {
 	return llb.AddMount(filepath.Join(prefix, tdnfCacheDir), llb.Scratch(), llb.AsPersistentCacheDir(tdnfCacheName, llb.CacheMountLocked))
 }
 
-func rpmHandler(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-	var mux frontend.RouteMux
-	mux.Add("", handleRPM, &bktargets.Target{
-		Name:        "",
-		Description: "Builds an rpm and src.rpm for mariner2.",
-	})
-
-	mux.Add("debug", rpm.HandleDebug(getSourceWorkerFunc(client)), nil)
-
-	return mux.Handle(ctx, client)
-}
-
 func handleRPM(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-	dc, err := dockerui.NewClient(client)
-	if err != nil {
-		return nil, err
-	}
-
-	spec, err := frontend.LoadSpec(ctx, dc)
-	if err := rpm.ValidateSpec(spec); err != nil {
-		return nil, fmt.Errorf("rpm: invalid spec: %w", err)
-	}
-
-	if dc.Target != "" {
-		// Once we have multi-spec support, we can validate this against the list of specs
-		if dc.Target != spec.Name {
-			return nil, fmt.Errorf("unknown rpm target %q", dc.Target)
+	return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *image.Image, error) {
+		if err := rpm.ValidateSpec(spec); err != nil {
+			return nil, nil, fmt.Errorf("rpm: invalid spec: %w", err)
 		}
-	}
 
-	rb, err := dc.Build(ctx, func(ctx context.Context, platform *ocispecs.Platform, idx int) (gwclient.Reference, *image.Image, error) {
 		pg := dalec.ProgressGroup("Building mariner2 rpm: " + spec.Name)
 		sOpt, err := frontend.SourceOptFromClient(ctx, client)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		st, err := specToRpmLLB(spec, sOpt, frontend.GetTargetKey(dc), pg)
+		st, err := specToRpmLLB(spec, sOpt, targetKey, pg)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -95,11 +68,6 @@ func handleRPM(ctx context.Context, client gwclient.Client) (*gwclient.Result, e
 		}
 		return ref, nil, nil
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	return rb.Finalize()
 }
 
 func shArgs(cmd string) llb.RunOption {
