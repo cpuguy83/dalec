@@ -174,7 +174,7 @@ func addDepsToSources(sources []llb.State, deps map[string]llb.State) []llb.Stat
 func getDefaultSourceWorker(resolver llb.ImageMetaResolver, spec *dalec.Spec) func(opts ...llb.ConstraintsOpt) llb.State {
 	return func(opts ...llb.ConstraintsOpt) llb.State {
 		opt := dalec.WithConstraints(append(opts, dalec.ProgressGroup("No source worker provided, preparing default worker image"))...)
-		return llb.Image("alpine:latest", opt).With(
+		return llb.Image("alpine:latest", llb.WithMetaResolver(resolver), opt).With(
 			func(in llb.State) llb.State {
 				if !spec.RequiresGo() {
 					return in
