@@ -83,6 +83,7 @@ func (m *RouteMux) handleSubrequest(ctx context.Context, client gwclient.Client,
 	}
 }
 
+// list outputs the list of targets that are supported by the mux
 func (m *RouteMux) list(ctx context.Context, client gwclient.Client, target string) (*gwclient.Result, error) {
 	var ls bktargets.List
 
@@ -105,11 +106,15 @@ func (m *RouteMux) list(ctx context.Context, client gwclient.Client, target stri
 
 		if h.t != nil {
 			t := *h.t
+			// We have the target info, we can use this directly
 			ls.Targets = append(ls.Targets, t)
 			continue
 		}
 
 		// No target info, so call the handler to get the info
+		// This calls the route handler.
+		// The route handler must be setup to handle the subrequest
+		// Today we assume all route handers are setup to handle the subrequest.
 		res, err := h.f(ctx, trimTargetOpt(client, matched))
 		if err != nil {
 			return nil, err
@@ -146,11 +151,9 @@ func (m *RouteMux) lookupTarget(target string) (matchedPattern string, _ *handle
 	// `target` is from `docker build --target=<target>`
 	// cases for `t` are as follows:
 	//    1. may have an exact match in the handlers (ideal)
-	//    2. may have a prefix match in the handlers, e.g. hander for `foo`, `target == "foo/bar"` (fallback)
-	//    3. No match in the handlers (error)
-	//
-	// In some cases, `target` may be empty, in those cases there must be a handler explicity added for the empty string
-
+	//    2. may have a prefix match in the handlers, e.g. hander for `foo`, `target == "foo/bar"` (assume nested route)
+	// 	  3. No matching handler and `target == ""` and there is a default handler set (assume default handler)
+	//    4. No match in the handlers (error)
 	h, ok := m.handlers[target]
 	if ok {
 		return target, &h, nil
@@ -194,16 +197,19 @@ func (m *RouteMux) Handle(ctx context.Context, client gwclient.Client) (*gwclien
 
 	res, err = h.f(ctx, client)
 	if err != nil {
-		err = checkResssableRoutesError(matched, err)
+		err = injectPathsToNotFoundError(matched, err)
 		return res, err
 	}
 
 	// If this request was a request to list targets, we need to modify the response a bit
 	// Otherwise we can just return the result as is.
-	if opts[requestIDKey] != bktargets.SubrequestsTargetsDefinition.Name {
-		return res, nil
+	if opts[requestIDKey] == bktargets.SubrequestsTargetsDefinition.Name {
+		return m.fixupListResult(matched, res)
 	}
+	return res, nil
+}
 
+func (m *RouteMux) fixupListResult(matched string, res *gwclient.Result) (*gwclient.Result, error) {
 	// Update the targets to include the matched key in their path
 	var v bktargets.List
 	if err := unmarshalResult(res, &v); err != nil {
@@ -232,12 +238,11 @@ func (m *RouteMux) Handle(ctx context.Context, client gwclient.Client) (*gwclien
 	res.AddMeta("result.txt", asResult.Metadata["result.txt"])
 	res.AddMeta("version", asResult.Metadata["version"])
 	return res, nil
-
 }
 
 // If the error is from noSuchHandlerError, we want to update the error to include the matched target
 // This makes sure the returned error message has the full target path.
-func checkResssableRoutesError(matched string, err error) error {
+func injectPathsToNotFoundError(matched string, err error) error {
 	if err == nil {
 		return nil
 	}
