@@ -125,11 +125,11 @@ func (m *RouteMux) list(ctx context.Context, client gwclient.Client, target stri
 
 	slices.Sort(check)
 
-	bklog.G(ctx).WithField("checks", check).Info("Checking targets")
+	bklog.G(ctx).WithField("checks", check).Debug("Checking targets")
 
 	for _, t := range check {
 		ctx := bklog.WithLogger(ctx, bklog.G(ctx).WithField("check", t))
-		bklog.G(ctx).Info("Lookup target")
+		bklog.G(ctx).Debug("Lookup target")
 		matched, h, err := m.lookupTarget(ctx, t)
 		if err != nil {
 			bklog.G(ctx).WithError(err).Warn("Error looking up target, skipping")
@@ -137,7 +137,7 @@ func (m *RouteMux) list(ctx context.Context, client gwclient.Client, target stri
 		}
 
 		ctx = bklog.WithLogger(ctx, bklog.G(ctx).WithField("matched", matched))
-		bklog.G(ctx).Info("Matched target")
+		bklog.G(ctx).Debug("Matched target")
 
 		if h.t != nil {
 			t := *h.t
