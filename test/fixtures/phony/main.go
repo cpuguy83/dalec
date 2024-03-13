@@ -27,8 +27,8 @@ func main() {
 		Name:        "check",
 		Description: "a phony target for a phony test world",
 	})
-	mux.Add("resolve", phonyResolve, &targets.Target{
-		Name:        "resolve",
+	mux.Add("debug/resolve", phonyResolve, &targets.Target{
+		Name:        "debug/resolve",
 		Description: "a phony resolve target for testing namespaced targets",
 	})
 
