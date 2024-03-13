@@ -28,13 +28,14 @@ func main() {
 	var mux frontend.RouteMux
 
 	mux.Add(debug.DebugRoute, debug.Handle, nil)
-	mux.Always(debug.DebugRoute)
 
 	mux.Add(mariner2.DefaultTargetKey, mariner2.Handle, nil)
 
-	// Please do not copy/paste this code into your own frontend.
-	// You should use [mux.Handle] rather than [mux.HandleWithForwards] to avoid recursive forwarding.
-	if err := grpcclient.RunFromEnvironment(ctx, mux.HandleWithForwards); err != nil {
+	if err := grpcclient.RunFromEnvironment(ctx, mux.Handler(
+		// copy/paster's beware: [frontend.WithTargetForwardingHandler] should not be set except for the root dalec frontend.
+		frontend.WithTargetForwardingHandler,
+		frontend.WithBuiltinHandler(mariner2.DefaultTargetKey, mariner2.Handle),
+	)); err != nil {
 		bklog.L.WithError(err).Fatal("error running frontend")
 		os.Exit(137)
 	}

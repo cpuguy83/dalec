@@ -27,8 +27,6 @@ type RouteMux struct {
 	defaultH *handler
 	// cached spec so we don't have to load it every time its needed
 	spec *dalec.Spec
-
-	always map[string]struct{}
 }
 
 type handler struct {
@@ -51,18 +49,6 @@ func (m *RouteMux) Add(targetKey string, bf BuildFuncRedux, info *bktargets.Targ
 	}
 
 	bklog.G(context.TODO()).WithField("target", targetKey).Info("Added handler to router")
-}
-
-// Always are for targets that should be available even if the spec has its own targets listed.
-func (m *RouteMux) Always(target string) {
-	if m.always == nil {
-		m.always = make(map[string]struct{})
-	}
-
-	if _, ok := m.handlers[target]; !ok {
-		panic("target must be registered with a handler before being marked as always available: " + target)
-	}
-	m.always[target] = struct{}{}
 }
 
 const keyTarget = "target"
@@ -129,14 +115,9 @@ func (m *RouteMux) loadSpec(ctx context.Context, client gwclient.Client) (*dalec
 func (m *RouteMux) list(ctx context.Context, client gwclient.Client, target string) (*gwclient.Result, error) {
 	var ls bktargets.List
 
-	check := maps.Keys(m.always)
+	var check []string
 	if target == "" {
-		// TODO: If the spec has targets set in it, we should only return the targets that are in the spec
-		for k := range m.handlers {
-			if _, ok := m.always[k]; !ok {
-				check = append(check, k)
-			}
-		}
+		check = maps.Keys(m.handlers)
 	} else {
 		// Use the target as a filter so the response only incldues routes that are underneath the target
 		check = append(check, target)
@@ -170,7 +151,7 @@ func (m *RouteMux) list(ctx context.Context, client gwclient.Client, target stri
 		// This calls the route handler.
 		// The route handler must be setup to handle the subrequest
 		// Today we assume all route handers are setup to handle the subrequest.
-		res, err := h.f(ctx, trimTargetOpt(client, matched))
+		res, err := h.f(ctx, setClientOptOption(trimTargetOpt(client, matched), keyTargetOpt, matched))
 		if err != nil {
 			bklog.G(ctx).Errorf("%+v", err)
 			return nil, err
@@ -258,7 +239,7 @@ func (m *RouteMux) Handle(ctx context.Context, client gwclient.Client) (*gwclien
 
 	// each call to `Handle` handles the next part of the target
 	// When we call the handler, we want to remove the part of the target that is being handled so the next handler can handle the next part
-	client = trimTargetOpt(client, matched)
+	client = setClientOptOption(trimTargetOpt(client, matched), keyTargetOpt, matched)
 
 	res, err = h.f(ctx, client)
 	if err != nil {
@@ -342,12 +323,23 @@ func marshalResult[T any](res *gwclient.Result, v *T) error {
 	return nil
 }
 
+// CurrentFrontend is an interface typically implemented by a [gwclient.Client]
+// This is used to get the rootfs of the current frontend.
+type CurrentFrontend interface {
+	CurrentFrontend() (*llb.State, error)
+}
+
+var (
+	_ gwclient.Client = (*clientWithCustomOpts)(nil)
+	_ CurrentFrontend = (*clientWithCustomOpts)(nil)
+)
+
 type clientWithCustomOpts struct {
 	opts gwclient.BuildOpts
 	gwclient.Client
 }
 
-func trimTargetOpt(client gwclient.Client, prefix string) gwclient.Client {
+func trimTargetOpt(client gwclient.Client, prefix string) *clientWithCustomOpts {
 	opts := client.BuildOpts()
 
 	updated := strings.TrimPrefix(opts.Opts[keyTarget], prefix)
@@ -361,22 +353,42 @@ func trimTargetOpt(client gwclient.Client, prefix string) gwclient.Client {
 	}
 }
 
+func setClientOptOption(client gwclient.Client, key, value string) *clientWithCustomOpts {
+	opts := client.BuildOpts()
+	opts.Opts[key] = value
+	return &clientWithCustomOpts{
+		Client: client,
+		opts:   opts,
+	}
+}
+
 func (d *clientWithCustomOpts) BuildOpts() gwclient.BuildOpts {
 	return d.opts
 }
 func (d *clientWithCustomOpts) CurrentFrontend() (*llb.State, error) {
-	return d.Client.(interface{ CurrentFrontend() (*llb.State, error) }).CurrentFrontend()
+	return d.Client.(CurrentFrontend).CurrentFrontend()
 }
 
-// HandleWithForwards wraps [m.Handle] such that it will forward requests to custom frontends listed in the spec.
-// Custom frontends should just use `[m.Handle]` directly.
-// This is used by the main dalec frontend.
-func (m *RouteMux) HandleWithForwards(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-	ctx = bklog.WithLogger(ctx, bklog.G(ctx).WithField("withForwarding", true))
+func (m *RouteMux) Handler(opts ...func(context.Context, gwclient.Client, *RouteMux) error) gwclient.BuildFunc {
+	return func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+		for _, opt := range opts {
+			if err := opt(ctx, client, m); err != nil {
+				return nil, err
+			}
+		}
+		return m.Handle(ctx, client)
+	}
+}
 
+// WithTargetForwardingHandler registers a handler for each spec target that has a custom frontend
+func WithTargetForwardingHandler(ctx context.Context, client gwclient.Client, m *RouteMux) error {
+	if k := GetTargetKey(client); k != "" {
+		// This is already a forwarded request, so we don't want to forward again
+		return fmt.Errorf("target forwarding requested but target is already forwarded: this is a bug in the frontend for %q", k)
+	}
 	spec, err := m.loadSpec(ctx, client)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	for key, t := range spec.Targets {
@@ -384,11 +396,8 @@ func (m *RouteMux) HandleWithForwards(ctx context.Context, client gwclient.Clien
 			continue
 		}
 
-		if _, ok := m.always[key]; ok {
-			return nil, fmt.Errorf("target %q is marked as always available and cannot be forwarded to a custom frontend", key)
-		}
 		m.Add(key, func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-			ctx = bklog.WithLogger(ctx, bklog.G(ctx).WithField("frontend", key).WithField("forwarded", true))
+			ctx = bklog.WithLogger(ctx, bklog.G(ctx).WithField("frontend", key).WithField("frontend-ref", t.Frontend.Image).WithField("forwarded", true))
 			bklog.G(ctx).Info("Forwarding to custom frontend")
 			req, err := newSolveRequest(
 				copyForForward(ctx, client),
@@ -406,10 +415,31 @@ func (m *RouteMux) HandleWithForwards(ctx context.Context, client gwclient.Clien
 		}, nil)
 		bklog.G(ctx).WithField("target", key).WithField("targets", maps.Keys(m.handlers)).WithField("targetKey", GetTargetKey(client)).Info("Added custom frontend to router")
 	}
+	return nil
+}
 
-	res, err := m.Handle(ctx, client)
-	if err != nil {
-		bklog.G(ctx).Errorf("%+v", err)
+// WithBuiltinHandler registers a late-binding handler for the given target key.
+// These are only added if the target is in the spec OR the spec has no explicit targets.
+func WithBuiltinHandler(key string, bf BuildFuncRedux) func(context.Context, gwclient.Client, *RouteMux) error {
+	return func(ctx context.Context, client gwclient.Client, m *RouteMux) error {
+		spec, err := m.loadSpec(ctx, client)
+		if err != nil {
+			return err
+		}
+
+		if len(spec.Targets) > 0 {
+			t, ok := spec.Targets[key]
+			if !ok {
+				bklog.G(ctx).WithField("spec targets", maps.Keys(spec.Targets)).WithField("targetKey", key).Info("Target not in the spec, skipping")
+				return nil
+			}
+
+			if t.Frontend != nil {
+				bklog.G(ctx).WithField("targetKey", key).Info("Target has custom frontend, skipping builtin-handler")
+			}
+		}
+
+		m.Add(key, bf, nil)
+		return nil
 	}
-	return res, err
 }
