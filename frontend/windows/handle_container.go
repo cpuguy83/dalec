@@ -3,7 +3,6 @@ package windows
 import (
 	"context"
 	"fmt"
-	"runtime"
 
 	"github.com/Azure/dalec"
 	"github.com/Azure/dalec/frontend"
@@ -20,8 +19,10 @@ const (
 
 var (
 	defaultPlatform = ocispecs.Platform{
-		OS:           outputKey,
-		Architecture: runtime.GOARCH,
+		OS: outputKey,
+		// Windows does not support arm64 currently, so default to amd64.
+		// This makes sure that builds work even on arm64 hosts.
+		Architecture: "amd64",
 	}
 )
 
