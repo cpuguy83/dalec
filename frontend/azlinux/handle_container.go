@@ -25,7 +25,7 @@ func handleContainer(w worker) gwclient.BuildFunc {
 
 			pg := dalec.ProgressGroup("Building " + targetKey + " container: " + spec.Name)
 
-			rpmDir, err := specToRpmLLB(ctx, w, client, spec, sOpt, targetKey, pg)
+			rpmDir, err := specToRpmLLB(ctx, w, client, spec, sOpt, targetKey, platform, pg)
 			if err != nil {
 				return nil, nil, fmt.Errorf("error creating rpm: %w", err)
 			}
@@ -35,7 +35,7 @@ func handleContainer(w worker) gwclient.BuildFunc {
 				return nil, nil, err
 			}
 
-			st, err := specToContainerLLB(w, client, spec, targetKey, rpmDir, rpms, sOpt, pg)
+			st, err := specToContainerLLB(w, client, spec, targetKey, rpmDir, rpms, sOpt, platform, pg)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -62,13 +62,17 @@ func handleContainer(w worker) gwclient.BuildFunc {
 				return nil, nil, err
 			}
 
+			if ref == nil {
+				return nil, nil, errors.New("rpm install resulted in an empty state - this is most likely a bug in dalec, please report it on our issue tracker at https://github.com/Azure/dalec")
+			}
+
 			withTestDeps := func(in llb.State) llb.State {
 				deps := spec.GetTestDeps(targetKey)
 				if len(deps) == 0 {
 					return in
 				}
 				return w.Base(client, pg).Run(
-					w.Install(spec.GetTestDeps(targetKey), atRoot("/tmp/rootfs")),
+					w.Install(spec.GetTestDeps(targetKey), atRoot("/tmp/rootfs"), withTargetPlatform(platform)),
 					pg,
 					dalec.ProgressGroup("Install test dependencies"),
 				).AddMount("/tmp/rootfs", in)
@@ -130,7 +134,7 @@ func readRPMs(ctx context.Context, client gwclient.Client, st llb.State) ([]stri
 	return out, nil
 }
 
-func specToContainerLLB(w worker, client gwclient.Client, spec *dalec.Spec, targetKey string, rpmDir llb.State, files []string, sOpt dalec.SourceOpts, opts ...llb.ConstraintsOpt) (llb.State, error) {
+func specToContainerLLB(w worker, client gwclient.Client, spec *dalec.Spec, targetKey string, rpmDir llb.State, files []string, sOpt dalec.SourceOpts, platform *ocispecs.Platform, opts ...llb.ConstraintsOpt) (llb.State, error) {
 	opts = append(opts, dalec.ProgressGroup("Install RPMs"))
 	const workPath = "/tmp/rootfs"
 
@@ -149,7 +153,7 @@ func specToContainerLLB(w worker, client gwclient.Client, spec *dalec.Spec, targ
 		}
 
 		rootfs = builderImg.Run(
-			w.Install(updated, atRoot(workPath), noGPGCheck, withManifests, installWithConstraints(opts)),
+			w.Install(updated, atRoot(workPath), noGPGCheck, withManifests, installWithConstraints(opts), withTargetPlatform(platform)),
 			llb.AddMount(rpmMountDir, rpmDir, llb.SourcePath("/RPMS")),
 			dalec.WithConstraints(opts...),
 		).AddMount(workPath, rootfs)

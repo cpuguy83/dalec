@@ -16,8 +16,19 @@ import (
 // It is expected to have rpmbuild and any other necessary build dependencies installed
 //
 // `specPath` is the path to the spec file to build relative to `topDir`
-func Build(topDir, workerImg llb.State, specPath string, opts ...llb.ConstraintsOpt) llb.State {
+//
+// `targetArch` is the distro specific architecture string that will be set on the rpm.
+// Consider using [dalec.ConvertOCIPlatformToLinux] to get this string.
+// When empty the the platform of the worker image will be used to set the rpm architecture.
+// If the spec should be architecture independent, use an empty value for `targetArch`
+func Build(topDir, workerImg llb.State, specPath, targetArch string, opts ...llb.ConstraintsOpt) llb.State {
 	opts = append(opts, dalec.ProgressGroup("Build RPM"))
+
+	var c llb.Constraints
+	for _, o := range opts {
+		o.SetConstraintsOption(&c)
+	}
+
 	return workerImg.Run(
 		// some notes on these args:
 		//  - _topdir is the directory where rpmbuild will look for SOURCES and SPECS
@@ -29,7 +40,7 @@ func Build(topDir, workerImg llb.State, specPath string, opts ...llb.Constraints
 		// TODO(cpuguy83): specPath would ideally never change.
 		// We don't want to have to re-run this step just because the path changed, this should be based on inputs only (ie the content of the rpm spec, sources, etc)
 		// The path should not be an input.
-		dalec.ShArgs(`rpmbuild --define "_topdir /build/top" --define "_srcrpmdir /build/out/SRPMS" --define "_rpmdir /build/out/RPMS" --buildroot /build/tmp/work -ba `+specPath),
+		dalec.ShArgs(`rpmbuild --define "_topdir /build/top" --define "_srcrpmdir /build/out/SRPMS" --define "_rpmdir /build/out/RPMS" --buildroot /build/tmp/work `+targetFlag(targetArch)+`-ba `+specPath),
 		llb.AddMount("/build/top", topDir),
 		llb.AddMount("/build/tmp", llb.Scratch(), llb.Tmpfs()),
 		llb.Dir("/build/top"),
@@ -37,6 +48,13 @@ func Build(topDir, workerImg llb.State, specPath string, opts ...llb.Constraints
 		dalec.WithConstraints(opts...),
 	).
 		AddMount("/build/out", llb.Scratch())
+}
+
+func targetFlag(arch string) string {
+	if arch == "" {
+		return ""
+	}
+	return "--target " + arch
 }
 
 var errMissingRequiredField = errors.New("missing required field")

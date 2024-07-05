@@ -1,4 +1,8 @@
 # syntax=ghcr.io/azure/dalec/frontend:latest
+
+args:
+  TARGETARCH: ""
+
 name: go-md2man
 version: 2.0.3
 revision: "1"
@@ -23,6 +27,8 @@ dependencies:
 build:
   env:
     CGO_ENABLED: "0"
+    GOARCH: ${TARGETARCH}
+
   steps:
     - command: |
         cd src

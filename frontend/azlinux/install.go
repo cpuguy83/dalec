@@ -7,6 +7,7 @@ import (
 
 	"github.com/Azure/dalec"
 	"github.com/moby/buildkit/client/llb"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 type installConfig struct {
@@ -21,6 +22,8 @@ type installConfig struct {
 	root string
 
 	constraints []llb.ConstraintsOpt
+
+	platform *ocispecs.Platform
 }
 
 type installOpt func(*installConfig)
@@ -42,6 +45,12 @@ func atRoot(root string) installOpt {
 func installWithConstraints(opts []llb.ConstraintsOpt) installOpt {
 	return func(cfg *installConfig) {
 		cfg.constraints = opts
+	}
+}
+
+func withTargetPlatform(p *ocispecs.Platform) installOpt {
+	return func(cfg *installConfig) {
+		cfg.platform = p
 	}
 }
 
@@ -104,6 +113,7 @@ const manifestSh = "manifest.sh"
 
 func tdnfInstall(cfg *installConfig, relVer string, pkgs []string) llb.RunOption {
 	cmdFlags := tdnfInstallFlags(cfg)
+
 	cmdArgs := fmt.Sprintf("set -ex; tdnf install -y --releasever=%s %s %s", relVer, cmdFlags, strings.Join(pkgs, " "))
 
 	var runOpts []llb.RunOption

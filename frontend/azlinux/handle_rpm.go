@@ -26,7 +26,7 @@ func handleRPM(w worker) gwclient.BuildFunc {
 				return nil, nil, err
 			}
 
-			st, err := specToRpmLLB(ctx, w, client, spec, sOpt, targetKey, pg)
+			st, err := specToRpmLLB(ctx, w, client, spec, sOpt, targetKey, platform, pg)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -64,14 +64,18 @@ func installBuildDeps(w worker, spec *dalec.Spec, targetKey string, opts ...llb.
 	}
 }
 
-func specToRpmLLB(ctx context.Context, w worker, client gwclient.Client, spec *dalec.Spec, sOpt dalec.SourceOpts, targetKey string, opts ...llb.ConstraintsOpt) (llb.State, error) {
+func specToRpmLLB(ctx context.Context, w worker, client gwclient.Client, spec *dalec.Spec, sOpt dalec.SourceOpts, targetKey string, p *ocispecs.Platform, opts ...llb.ConstraintsOpt) (llb.State, error) {
 	base := w.Base(client, opts...).With(installBuildDeps(w, spec, targetKey, opts...))
 	br, err := rpm.SpecToBuildrootLLB(base, spec, sOpt, targetKey, opts...)
 	if err != nil {
 		return llb.Scratch(), err
 	}
 	specPath := filepath.Join("SPECS", spec.Name, spec.Name+".spec")
-	st := rpm.Build(br, base, specPath, opts...)
+	var targetArch string
+	if !spec.NoArch {
+		targetArch = dalec.ConvertOCIPlatformToLinux(p)
+	}
+	st := rpm.Build(br, base, specPath, targetArch, opts...)
 
 	if signer, ok := spec.GetSigner(targetKey); ok {
 		signed, err := frontend.ForwardToSigner(ctx, client, signer, st)

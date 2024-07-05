@@ -12,6 +12,7 @@ import (
 
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/identity"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 var disableDiffMerge atomic.Bool
@@ -417,4 +418,37 @@ func OptionEquals[T comparable](v T, ptr *T) bool {
 	}
 
 	return v == *ptr
+}
+
+// ConvertOCIPlatformToLinux is a convenience function that, as a best-effort only, takes the architecutre+variant from OCI and converts it to known linux kernel arch strings (e.g. `uname -m`)
+// Typically OCI platforms follow the Go standard.
+//
+// Example Arch: arm64 -> aarch64
+// Example Arch: arm, Variant: v7 -> armv7hl
+//
+// Example usage: pass the value of this into `rpmbuild --target`
+// Note: Debian distros typically use different values, so your mileage mayh vary
+// with this function.
+// For packaging, this will probably only work on rpm-based distros.
+func ConvertOCIPlatformToLinux(p *ocispecs.Platform) string {
+	if p == nil {
+		return ""
+	}
+
+	switch p.Architecture {
+	case "amd64":
+		return "x86_64"
+	case "arm":
+		switch p.Variant {
+		case "v5", "v6":
+			return "armel"
+		case "v7", "":
+			return "armv7hl"
+		}
+	case "arm64":
+		return "aarch64"
+	}
+
+	// fallback to just the architecture
+	return p.Architecture
 }
