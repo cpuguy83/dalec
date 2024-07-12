@@ -32,7 +32,7 @@ func SpecHandler(ctx context.Context, client gwclient.Client, spec *dalec.Spec, 
 
 func HandleSpec() gwclient.BuildFunc {
 	return func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-		return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *dalec.DockerImageSpec, error) {
+		return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string, sOpt dalec.SourceOpts) (gwclient.Reference, *dalec.DockerImageSpec, error) {
 			res, err := SpecHandler(ctx, client, spec, targetKey)
 			if err != nil {
 				return nil, nil, err

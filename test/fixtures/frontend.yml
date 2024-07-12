@@ -37,3 +37,7 @@ artifacts:
 
 image:
   entrypoint: frontend
+
+package_config:
+  signer:
+    image: "foo"

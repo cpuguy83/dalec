@@ -13,7 +13,7 @@ import (
 
 func handleDepsOnly(w worker) gwclient.BuildFunc {
 	return func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-		return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *dalec.DockerImageSpec, error) {
+		return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string, sOpt dalec.SourceOpts) (gwclient.Reference, *dalec.DockerImageSpec, error) {
 			pg := dalec.ProgressGroup("Build mariner2 deps-only container: " + spec.Name)
 			baseImg := w.Base(client, pg)
 			rpmDir := baseImg.Run(
@@ -27,10 +27,6 @@ func handleDepsOnly(w worker) gwclient.BuildFunc {
 				return nil, nil, err
 			}
 
-			sOpt, err := frontend.SourceOptFromClient(ctx, client)
-			if err != nil {
-				return nil, nil, err
-			}
 			st, err := specToContainerLLB(w, client, spec, targetKey, rpmDir, files, sOpt, pg)
 			if err != nil {
 				return nil, nil, err

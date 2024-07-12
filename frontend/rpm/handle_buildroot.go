@@ -15,12 +15,7 @@ type WorkerFunc func(resolver llb.ImageMetaResolver, spec *dalec.Spec, targetKey
 
 func HandleBuildroot(wf WorkerFunc) gwclient.BuildFunc {
 	return func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-		return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *dalec.DockerImageSpec, error) {
-			sOpt, err := frontend.SourceOptFromClient(ctx, client)
-			if err != nil {
-				return nil, nil, err
-			}
-
+		return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string, sOpt dalec.SourceOpts) (gwclient.Reference, *dalec.DockerImageSpec, error) {
 			worker, err := wf(sOpt.Resolver, spec, targetKey)
 			if err != nil {
 				return nil, nil, err

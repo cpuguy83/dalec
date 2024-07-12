@@ -15,17 +15,12 @@ import (
 
 func handleRPM(w worker) gwclient.BuildFunc {
 	return func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-		return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *dalec.DockerImageSpec, error) {
+		return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string, sOpt dalec.SourceOpts) (gwclient.Reference, *dalec.DockerImageSpec, error) {
 			if err := rpm.ValidateSpec(spec); err != nil {
 				return nil, nil, fmt.Errorf("rpm: invalid spec: %w", err)
 			}
 
 			pg := dalec.ProgressGroup("Building " + targetKey + " rpm: " + spec.Name)
-			sOpt, err := frontend.SourceOptFromClient(ctx, client)
-			if err != nil {
-				return nil, nil, err
-			}
-
 			st, err := specToRpmLLB(ctx, w, client, spec, sOpt, targetKey, pg)
 			if err != nil {
 				return nil, nil, err
@@ -73,5 +68,5 @@ func specToRpmLLB(ctx context.Context, w worker, client gwclient.Client, spec *d
 	specPath := filepath.Join("SPECS", spec.Name, spec.Name+".spec")
 	st := rpm.Build(br, base, specPath, opts...)
 
-	return frontend.MaybeSign(ctx, client, st, spec, targetKey)
+	return frontend.MaybeSign(ctx, client, st, spec, targetKey, sOpt)
 }

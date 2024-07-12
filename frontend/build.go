@@ -12,15 +12,15 @@ import (
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
-func LoadSpec(ctx context.Context, client *dockerui.Client, platform *ocispecs.Platform) (*dalec.Spec, error) {
+func LoadSpec(ctx context.Context, client *dockerui.Client, platform *ocispecs.Platform) (*dalec.Spec, *dockerui.Source, error) {
 	src, err := client.ReadEntrypoint(ctx, "Dockerfile")
 	if err != nil {
-		return nil, fmt.Errorf("could not read spec file: %w", err)
+		return nil, nil, fmt.Errorf("could not read spec file: %w", err)
 	}
 
 	spec, err := dalec.LoadSpec(bytes.TrimSpace(src.Data))
 	if err != nil {
-		return nil, fmt.Errorf("error loading spec: %w", err)
+		return nil, nil, fmt.Errorf("error loading spec: %w", err)
 	}
 
 	args := dalec.DuplicateMap(client.BuildArgs)
@@ -33,9 +33,9 @@ func LoadSpec(ctx context.Context, client *dockerui.Client, platform *ocispecs.P
 	fillPlatformArgs("BUILD", args, client.BuildPlatforms[0])
 
 	if err := spec.SubstituteArgs(args); err != nil {
-		return nil, fmt.Errorf("error resolving build args")
+		return nil, nil, fmt.Errorf("error resolving build args: %w", err)
 	}
-	return spec, nil
+	return spec, src, nil
 }
 
 func getOS(platform ocispecs.Platform) string {
@@ -67,7 +67,7 @@ func fillPlatformArgs(prefix string, args map[string]string, platform ocispecs.P
 	}
 }
 
-type PlatformBuildFunc func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *dalec.DockerImageSpec, error)
+type PlatformBuildFunc func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string, sOpt dalec.SourceOpts) (gwclient.Reference, *dalec.DockerImageSpec, error)
 
 // BuildWithPlatform is a helper function to build a spec with a given platform
 // It takes care of looping through each tarrget platform and executing the build with the platform args substituted in the spec.
@@ -79,13 +79,18 @@ func BuildWithPlatform(ctx context.Context, client gwclient.Client, f PlatformBu
 	}
 
 	rb, err := dc.Build(ctx, func(ctx context.Context, platform *ocispecs.Platform, idx int) (gwclient.Reference, *dalec.DockerImageSpec, *dalec.DockerImageSpec, error) {
-		spec, err := LoadSpec(ctx, dc, platform)
+		spec, src, err := LoadSpec(ctx, dc, platform)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 		targetKey := GetTargetKey(dc)
 
-		ref, cfg, err := f(ctx, client, platform, spec, targetKey)
+		sOpt, err := SourceOptFromClient(ctx, client, src.Warn)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		ref, cfg, err := f(ctx, client, platform, spec, targetKey, sOpt)
 		return ref, cfg, nil, err
 	})
 	if err != nil {

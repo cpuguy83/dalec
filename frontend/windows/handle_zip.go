@@ -25,12 +25,7 @@ const (
 )
 
 func handleZip(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-	return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *dalec.DockerImageSpec, error) {
-		sOpt, err := frontend.SourceOptFromClient(ctx, client)
-		if err != nil {
-			return nil, nil, err
-		}
-
+	return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string, sOpt dalec.SourceOpts) (gwclient.Reference, *dalec.DockerImageSpec, error) {
 		pg := dalec.ProgressGroup("Build windows container: " + spec.Name)
 		worker := workerImg(sOpt, pg)
 
@@ -144,7 +139,7 @@ func buildBinaries(ctx context.Context, spec *dalec.Spec, worker llb.State, clie
 		llb.Network(llb.NetModeNone),
 	).AddMount(outputDir, llb.Scratch())
 
-	return frontend.MaybeSign(ctx, client, st, spec, targetKey)
+	return frontend.MaybeSign(ctx, client, st, spec, targetKey, sOpt)
 }
 
 func getZipLLB(worker llb.State, name string, artifacts llb.State) llb.State {

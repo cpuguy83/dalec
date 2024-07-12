@@ -134,7 +134,7 @@ func (m *BuildMux) loadSpec(ctx context.Context, client gwclient.Client) (*dalec
 	}
 
 	// Note: this is not suitable for passing to builds since it does ot have platform information
-	spec, err := LoadSpec(ctx, dc, nil)
+	spec, _, err := LoadSpec(ctx, dc, nil)
 	if err != nil {
 		return nil, err
 	}

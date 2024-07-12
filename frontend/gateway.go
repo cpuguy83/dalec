@@ -5,14 +5,11 @@ import (
 	"sync"
 	"sync/atomic"
 
-	_ "crypto/sha256" // import here so digests package does not panic
-
 	"github.com/Azure/dalec"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/solver/pb"
-	"github.com/opencontainers/go-digest"
 	"github.com/pkg/errors"
 )
 
@@ -101,7 +98,7 @@ func GetBuildArg(client gwclient.Client, k string) (string, bool) {
 	return "", false
 }
 
-func SourceOptFromClient(ctx context.Context, c gwclient.Client) (dalec.SourceOpts, error) {
+func SourceOptFromClient(ctx context.Context, c gwclient.Client, warn func(context.Context, string, gwclient.WarnOpts)) (dalec.SourceOpts, error) {
 	dc, err := dockerui.NewClient(c)
 	if err != nil {
 		return dalec.SourceOpts{}, err
@@ -121,6 +118,9 @@ func SourceOptFromClient(ctx context.Context, c gwclient.Client) (dalec.SourceOp
 				return nil, err
 			}
 			return st, nil
+		},
+		Warn: func(ctx context.Context, msg string) {
+			warn(ctx, msg, gwclient.WarnOpts{})
 		},
 	}, nil
 }
@@ -217,19 +217,17 @@ func GetTargetKey(client BuildOpstGetter) string {
 	return client.BuildOpts().Opts[keyTopLevelTarget]
 }
 
-// Warn sends a warning tot he client for the provided state.
+// Warn sends a warning to the client for the provided state.
 func Warn(ctx context.Context, client gwclient.Client, st llb.State, msg string) error {
 	def, err := st.Marshal(ctx)
 	if err != nil {
 		return err
 	}
 
-	dt, err := def.ToPB().Marshal()
+	vtx, err := def.Head()
 	if err != nil {
 		return err
 	}
 
-	dgst := digest.Canonical.FromBytes(dt)
-
-	return client.Warn(ctx, dgst, msg, gwclient.WarnOpts{})
+	return client.Warn(ctx, vtx, msg, gwclient.WarnOpts{})
 }

@@ -13,12 +13,7 @@ import (
 
 // Sources is a handler that outputs all the sources.
 func Sources(ctx context.Context, client gwclient.Client) (*client.Result, error) {
-	return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *dalec.DockerImageSpec, error) {
-		sOpt, err := frontend.SourceOptFromClient(ctx, client)
-		if err != nil {
-			return nil, nil, err
-		}
-
+	return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string, sOpt dalec.SourceOpts) (gwclient.Reference, *dalec.DockerImageSpec, error) {
 		sources, err := dalec.Sources(spec, sOpt)
 		if err != nil {
 			return nil, nil, err

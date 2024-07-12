@@ -17,12 +17,7 @@ import (
 
 func handleContainer(w worker) gwclient.BuildFunc {
 	return func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
-		return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *dalec.DockerImageSpec, error) {
-			sOpt, err := frontend.SourceOptFromClient(ctx, client)
-			if err != nil {
-				return nil, nil, err
-			}
-
+		return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string, sOpt dalec.SourceOpts) (gwclient.Reference, *dalec.DockerImageSpec, error) {
 			pg := dalec.ProgressGroup("Building " + targetKey + " container: " + spec.Name)
 
 			rpmDir, err := specToRpmLLB(ctx, w, client, spec, sOpt, targetKey, pg)
@@ -74,7 +69,7 @@ func handleContainer(w worker) gwclient.BuildFunc {
 				).AddMount("/tmp/rootfs", in)
 			}
 
-			if err := frontend.RunTests(ctx, client, spec, ref, withTestDeps, targetKey); err != nil {
+			if err := frontend.RunTests(ctx, client, spec, ref, withTestDeps, targetKey, sOpt); err != nil {
 				return nil, nil, err
 			}
 
