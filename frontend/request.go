@@ -12,6 +12,7 @@ import (
 	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/solver/pb"
+	"github.com/moby/buildkit/util/bklog"
 	"github.com/pkg/errors"
 )
 
@@ -137,6 +138,10 @@ func marshalDockerfile(ctx context.Context, dt []byte, opts ...llb.ConstraintsOp
 
 func MaybeSign(ctx context.Context, client gwclient.Client, st llb.State, spec *dalec.Spec, targetKey string) (llb.State, error) {
 	if signingDisabled(client) {
+		err := Warn(ctx, client, st, "Signing disabled by build-arg "+keySkipSigningArg)
+		if err != nil {
+			bklog.G(ctx).WithError(err).Error("Error writing warning log")
+		}
 		return st, nil
 	}
 
@@ -153,9 +158,11 @@ func MaybeSign(ctx context.Context, client gwclient.Client, st llb.State, spec *
 	return signed, nil
 }
 
+const keySkipSigningArg = "DALEC_SKIP_SIGNING"
+
 func signingDisabled(client gwclient.Client) bool {
 	bopts := client.BuildOpts().Opts
-	v, ok := bopts["build-arg:DALEC_SKIP_SIGNING"]
+	v, ok := bopts["build-arg:"+keySkipSigningArg]
 	if !ok {
 		return false
 	}

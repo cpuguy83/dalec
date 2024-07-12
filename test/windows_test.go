@@ -12,6 +12,8 @@ import (
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	moby_buildkit_v1_frontend "github.com/moby/buildkit/frontend/gateway/pb"
+	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"gotest.tools/v3/assert"
 )
 
 func TestWindows(t *testing.T) {
@@ -258,10 +260,10 @@ echo "$BAR" > bar.txt
 		})
 	})
 
-	runTest := func(t *testing.T, f testenv.TestFunc) {
+	runTest := func(t *testing.T, f testenv.TestFunc, opts ...testenv.TestRunnerOpt) {
 		t.Helper()
 		ctx := startTestSpan(baseCtx, t)
-		testEnv.RunTest(ctx, t, f)
+		testEnv.RunTest(ctx, t, f, opts...)
 	}
 
 	t.Run("test windows signing", func(t *testing.T) {
@@ -310,7 +312,11 @@ echo "$BAR" > bar.txt
 				},
 			})
 
-			sr := newSolveRequest(withSpec(ctx, t, zipperSpec), withBuildTarget("mariner2/container"))
+			platform := v1.Platform{
+				OS:           "linux",
+				Architecture: "amd64",
+			}
+			sr := newSolveRequest(withSpec(ctx, t, zipperSpec), withBuildTarget("mariner2/container"), withPlatform(platform))
 			zipper := reqToState(ctx, gwc, sr, t)
 
 			sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget("windowscross/zip"))
@@ -343,6 +349,17 @@ echo "$BAR" > bar.txt
 
 	t.Run("test skipping windows signing", func(t *testing.T) {
 		t.Parallel()
+
+		var found bool
+		handleStatus := func(status *testenv.SolveStatus) {
+			for _, w := range status.Warnings {
+				if strings.Contains(string(w.Short), "signing disabled by build-arg") {
+					found = true
+					return
+				}
+			}
+		}
+
 		runTest(t, func(ctx context.Context, gwc gwclient.Client) {
 			spec := fillMetadata("foo", &dalec.Spec{
 				Targets: map[string]dalec.Target{
@@ -391,6 +408,7 @@ echo "$BAR" > bar.txt
 			zipper := reqToState(ctx, gwc, sr, t)
 
 			sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget("windowscross/zip"), withBuildArg("DALEC_SKIP_SIGNING", "1"))
+
 			st := reqToState(ctx, gwc, sr, t)
 
 			st = zipper.Run(llb.Args([]string{"bash", "-c", `for f in ./*.zip; do unzip "$f"; done`}), llb.Dir("/tmp/mnt")).
@@ -412,7 +430,8 @@ echo "$BAR" > bar.txt
 			if _, err = maybeReadFile(ctx, "/config.json", res); err == nil {
 				t.Fatalf("signing took place even though signing was disabled")
 			}
-		})
+		}, testenv.WithSolveStatusFn(handleStatus))
+		assert.Assert(t, found, "Signing disabled warning message not emitted")
 	})
 
 	t.Run("go module", func(t *testing.T) {
@@ -474,6 +493,7 @@ echo "$BAR" > bar.txt
 
 func reqToState(ctx context.Context, gwc gwclient.Client, sr gwclient.SolveRequest, t *testing.T) llb.State {
 	t.Helper()
+
 	res := solveT(ctx, t, gwc, sr)
 
 	ref, err := res.SingleRef()

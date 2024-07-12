@@ -5,11 +5,14 @@ import (
 	"sync"
 	"sync/atomic"
 
+	_ "crypto/sha256" // import here so digests package does not panic
+
 	"github.com/Azure/dalec"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/solver/pb"
+	"github.com/opencontainers/go-digest"
 	"github.com/pkg/errors"
 )
 
@@ -212,4 +215,21 @@ type BuildOpstGetter interface {
 // GetTargetKey returns the key that should be used to select the [dalec.Target] from the [dalec.Spec]
 func GetTargetKey(client BuildOpstGetter) string {
 	return client.BuildOpts().Opts[keyTopLevelTarget]
+}
+
+// Warn sends a warning tot he client for the provided state.
+func Warn(ctx context.Context, client gwclient.Client, st llb.State, msg string) error {
+	def, err := st.Marshal(ctx)
+	if err != nil {
+		return err
+	}
+
+	dt, err := def.ToPB().Marshal()
+	if err != nil {
+		return err
+	}
+
+	dgst := digest.Canonical.FromBytes(dt)
+
+	return client.Warn(ctx, dgst, msg, gwclient.WarnOpts{})
 }
