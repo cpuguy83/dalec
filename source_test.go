@@ -527,9 +527,12 @@ func TestSourceContext(t *testing.T) {
 				ops := getSourceOp(ctx, t, src)
 				checkContext(t, ops[0].GetSource(), &src)
 				// With include/exclude only, this should be handled with just one op.
-				if len(ops) != 1 {
+				// except... there are optimizations to prevent fetching the same context multiple times
+				// As such we need to make sure filters are applied correctly.
+				if len(ops) != 2 {
 					t.Fatalf("expected 1 op, got %d\n%s", len(ops), ops)
 				}
+				checkFilter(t, ops[1].GetFile(), &src)
 			})
 
 			t.Run("subpath with include-exclude", func(t *testing.T) {
@@ -540,10 +543,6 @@ func TestSourceContext(t *testing.T) {
 				ops := getSourceOp(ctx, t, src)
 				checkContext(t, ops[0].GetSource(), &src)
 				// for context source, we expect to have a copy operation as the last op when subdir is used
-
-				// set includes, excludes to nil before checking against filter, as includes and excludes are
-				// handled before filter operation for context sources
-				src.Includes, src.Excludes = nil, nil
 				checkFilter(t, ops[1].GetFile(), &src)
 			})
 		})
@@ -879,6 +878,7 @@ func checkGitOp(t *testing.T, ops []*pb.Op, src *Source) {
 }
 
 func checkFilter(t *testing.T, op *pb.FileOp, src *Source) {
+	t.Helper()
 	if op == nil {
 		t.Fatal("expected file op")
 	}
