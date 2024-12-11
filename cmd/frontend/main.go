@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"os"
+	"os/exec"
 
 	"github.com/Azure/dalec/frontend"
 	"github.com/Azure/dalec/frontend/azlinux"
@@ -27,6 +29,22 @@ func main() {
 
 	ctx := appcontext.Context()
 
+	var err error
+	if os.Getenv("_DALEC_DEBUG") == "1" {
+		if os.Getenv("_DALEC_DEBUG_PHASE") == "2" {
+			err = run(ctx)
+		} else {
+			err = runDebug(ctx)
+		}
+	}
+
+	if err != nil {
+		bklog.L.WithError(err).Fatal("Error running frontend")
+		os.Exit(137)
+	}
+}
+
+func run(ctx context.Context) error {
 	var mux frontend.BuildMux
 
 	mux.Add(debug.DebugRoute, debug.Handle, nil)
@@ -43,4 +61,13 @@ func main() {
 		bklog.L.WithError(err).Fatal("error running frontend")
 		os.Exit(137)
 	}
+}
+
+func runDebug(ctx context.Context) error {
+	cmd := exec.CommandContext(ctx, "dlv", "exec", "/frontend")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(), "_DALEC_DEBUG_PHASE=2")
+	return cmd.Run()
 }
