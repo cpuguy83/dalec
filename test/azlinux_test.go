@@ -73,7 +73,7 @@ func TestMariner2(t *testing.T) {
 		},
 		Worker: workerConfig{
 			ContextName:    azlinux.Mariner2WorkerContextName,
-			CreateRepo:     azlinuxWithRepo,
+			CreateRepo:     createYumRepo(azlinux.Mariner2Config),
 			SignRepo:       signRepoAzLinux,
 			TestRepoConfig: azlinuxTestRepoConfig,
 			Constraints:    azlinuxConstraints,
@@ -106,7 +106,7 @@ func TestAzlinux3(t *testing.T) {
 		},
 		Worker: workerConfig{
 			ContextName:    azlinux.Azlinux3WorkerContextName,
-			CreateRepo:     azlinuxWithRepo,
+			CreateRepo:     createYumRepo(azlinux.Azlinux3Config),
 			SignRepo:       signRepoAzLinux,
 			TestRepoConfig: azlinuxTestRepoConfig,
 			Constraints:    azlinuxConstraints,
@@ -152,38 +152,6 @@ func signRepoAzLinux(gpgKey llb.State) llb.StateOption {
 					gpg --detach-sign --default-key "$ID" --armor --yes /opt/repo/repodata/repomd.xml`),
 				llb.AddMount("/tmp/gpg", gpgKey, llb.Readonly),
 			).Root()
-	}
-}
-
-func azlinuxWithRepo(rpms llb.State, opts ...llb.StateOption) llb.StateOption {
-	return func(in llb.State) llb.State {
-		localRepo := []byte(`
-[Local]
-name=Local Repository
-baseurl=file:///opt/repo
-gpgcheck=0
-priority=0
-enabled=1
-`)
-		pg := dalec.ProgressGroup("Install local repo for test")
-		withRepos := in.
-			File(llb.Mkdir("/opt/repo/RPMS", 0o755, llb.WithParents(true)), pg).
-			File(llb.Mkdir("/opt/repo/SRPMS", 0o755), pg).
-			Run(dalec.ShArgs("tdnf install -y createrepo"), pg).
-			File(llb.Mkfile("/etc/yum.repos.d/local.repo", 0o644, localRepo), pg).
-			Run(
-				llb.AddMount("/tmp/st", rpms, llb.Readonly),
-				dalec.ShArgs("cp /tmp/st/RPMS/$(uname -m)/* /opt/repo/RPMS/ && cp /tmp/st/SRPMS/* /opt/repo/SRPMS"),
-				pg,
-			).
-			Run(dalec.ShArgs("createrepo --compatibility /opt/repo"), pg).
-			Root()
-
-		for _, opt := range opts {
-			withRepos = withRepos.With(opt)
-		}
-
-		return withRepos
 	}
 }
 
@@ -620,11 +588,14 @@ echo "$BAR" > bar.txt
 					Files: map[string]dalec.FileCheckOutput{
 						"/etc/os-release": {
 							CheckOutput: dalec.CheckOutput{
-								Contains: []string{
-									fmt.Sprintf("ID=%s\n", testConfig.Release.ID),
-									// Note: the value of `VERSION_ID` needs to be quoted!
-									// TODO: Something is stripping the quotes here...
-									// fmt.Sprintf("VERSION_ID=%q\n", testConfig.Release.VersionID),
+								Matches: []string{
+									// Som distros have quotes around the values
+									// Regex is to match the values with or without quotes
+									// "(?m)" enables multi-line mode so that ^ and $ match the start and end of lines rathe than the full document.
+									//
+									// Due to these values getting processed for build args, quotes are stripped unless they are escaped.
+									`(?m)^ID=(\")?` + testConfig.Release.ID + `(\")?`,
+									`(?m)^VERSION_ID=(\")?` + testConfig.Release.VersionID + `(\")?`,
 								},
 							},
 						},
