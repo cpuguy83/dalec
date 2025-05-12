@@ -1683,6 +1683,11 @@ Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/boot
 		ctx := startTestSpan(baseCtx, t)
 		testAutoGobuildCache(ctx, t, testConfig.Target)
 	})
+	t.Run("auto bazel-local cache", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		testAutoBazelLocalCache(ctx, t, testConfig.Target)
+	})
 }
 
 func testCustomLinuxWorker(ctx context.Context, t *testing.T, targetCfg targetConfig, workerCfg workerConfig) {

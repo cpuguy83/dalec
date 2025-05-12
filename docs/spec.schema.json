@@ -343,6 +343,34 @@
 				"null"
 			]
 		},
+		"BazelLocalCache": {
+			"required": [
+				"scope",
+				"disabled"
+			],
+			"properties": {
+				"disabled": {
+					"type": [
+						"boolean"
+					],
+					"description": "The bazel cache may be automatically injected into a build if\nbazel is detected.\nDisabled explicitly turns this off."
+				},
+				"scope": {
+					"type": [
+						"string"
+					],
+					"description": "Scope adds extra information to the cache key.\nThis is useful to differentiate between different build contexts if required.\n\nThis is mainly intended for internal testing purposes."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "BazelLocalCache sets up a cache for bazel builds."
+		},
 		"BuildStep": {
 			"required": [
 				"command"
@@ -379,6 +407,10 @@
 		},
 		"CacheConfig": {
 			"properties": {
+				"bazel-local": {
+					"$ref": "#/$defs/BazelLocalCache",
+					"description": "Bazel specifies a cache for bazel builds."
+				},
 				"dir": {
 					"$ref": "#/$defs/CacheDir",
 					"description": "Dir specifies a generic cache directory configuration."
@@ -407,6 +439,12 @@
 						"gobuild"
 					],
 					"title": "gobuild"
+				},
+				{
+					"required": [
+						"bazel-local"
+					],
+					"title": "bazel-local"
 				}
 			],
 			"description": "CacheConfig configures a cache to use for a build."
@@ -848,7 +886,7 @@
 					"type": [
 						"boolean"
 					],
-					"description": "The gobuild cache may be automatically injected into a build of\ngo is detected.\nDisabled explicitly turns this off."
+					"description": "The gobuild cache may be automatically injected into a build if\ngo is detected.\nDisabled explicitly turns this off."
 				},
 				"scope": {
 					"type": [

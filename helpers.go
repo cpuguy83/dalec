@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/containerd/platforms"
@@ -152,6 +154,9 @@ func WithConstraints(ls ...llb.ConstraintsOpt) llb.ConstraintsOpt {
 
 func WithConstraint(in *llb.Constraints) llb.ConstraintsOpt {
 	return ConstraintsOptFunc(func(c *llb.Constraints) {
+		if in == nil {
+			return
+		}
 		*c = *in
 	})
 }
@@ -623,6 +628,34 @@ func HasGolang(spec *Spec, targetKey string) bool {
 			return true
 		}
 		if strings.HasPrefix(dep, "golang-") {
+			return true
+		}
+	}
+	return false
+}
+
+var bzlVerRegex = sync.OnceValue(func() *regexp.Regexp {
+	return regexp.MustCompile(`^bazel[0-9]+`)
+})
+
+func HasBazel(spec *Spec, targetKey string) bool {
+	for dep := range spec.GetBuildDeps(targetKey) {
+		switch dep {
+		case "bazel", "bazel-bootstrap":
+			return true
+		}
+
+		// Also bazel-<foo> is almost certainly the bazel we are looking for
+		if strings.HasPrefix(dep, "bazel-") {
+			return true
+		}
+
+		if !strings.HasPrefix("bazel", dep) {
+			continue
+		}
+
+		// bazel<num> is a valid package name
+		if bzlVerRegex().MatchString(dep) {
 			return true
 		}
 	}

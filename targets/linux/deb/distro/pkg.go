@@ -48,6 +48,10 @@ func (d *Config) BuildPkg(ctx context.Context, client gwclient.Client, worker ll
 
 	builder := worker.With(dalec.SetBuildNetworkMode(spec))
 
+	if needsBazelCache(spec, targetKey) {
+		addBazelCache(spec)
+	}
+
 	st, err := deb.BuildDeb(builder, spec, srcPkg, versionID, append(opts, frontend.IgnoreCache(client, targets.IgnoreCacheKeyPkg))...)
 	if err != nil {
 		return llb.Scratch(), err
@@ -73,6 +77,21 @@ func (d *Config) BuildPkg(ctx context.Context, client gwclient.Client, worker ll
 
 func noOpStateOpt(in llb.State) llb.State {
 	return in
+}
+
+func needsBazelCache(spec *dalec.Spec, targetKey string) bool {
+	for _, c := range spec.Build.Caches {
+		if c.Bazel != nil {
+			return false
+		}
+	}
+	return dalec.HasBazel(spec, targetKey)
+}
+
+func addBazelCache(spec *dalec.Spec) {
+	spec.Build.Caches = append(spec.Build.Caches, dalec.CacheConfig{
+		Bazel: &dalec.BazelLocalCache{},
+	})
 }
 
 func prepareGo(ctx context.Context, client gwclient.Client, cfg *deb.SourcePkgConfig, worker llb.State, spec *dalec.Spec, targetKey string, opts ...llb.ConstraintsOpt) (llb.StateOption, error) {

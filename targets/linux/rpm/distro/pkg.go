@@ -44,6 +44,21 @@ func needsAutoGocache(spec *dalec.Spec, targetKey string) bool {
 	return true
 }
 
+func addBazelCache(info *rpm.CacheInfo) {
+	info.Caches = append(info.Caches, dalec.CacheConfig{
+		Bazel: &dalec.BazelLocalCache{},
+	})
+}
+
+func needsAutoBazelCache(spec *dalec.Spec, targetKey string) bool {
+	for _, c := range spec.Build.Caches {
+		if c.Bazel != nil {
+			return false
+		}
+	}
+	return dalec.HasBazel(spec, targetKey)
+}
+
 func (c *Config) BuildPkg(ctx context.Context, client gwclient.Client, worker llb.State, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, opts ...llb.ConstraintsOpt) (llb.State, error) {
 	worker = worker.With(c.InstallBuildDeps(ctx, client, spec, sOpt, targetKey, opts...))
 
@@ -59,6 +74,10 @@ func (c *Config) BuildPkg(ctx context.Context, client gwclient.Client, worker ll
 
 	if needsAutoGocache(spec, targetKey) {
 		addGoCache(&cacheInfo)
+	}
+
+	if needsAutoBazelCache(spec, targetKey) {
+		addBazelCache(&cacheInfo)
 	}
 
 	st := rpm.Build(br, builder, specPath, cacheInfo, opts...)

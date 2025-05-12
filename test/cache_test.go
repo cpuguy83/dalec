@@ -52,6 +52,11 @@ func testArtifactBuildCacheDir(ctx context.Context, t *testing.T, cfg targetConf
 				Scope: randKey,
 			},
 		},
+		{
+			Bazel: &dalec.BazelLocalCache{
+				Scope: randKey,
+			},
+		},
 	}
 
 	specWithCommand := func(cmds ...string) *dalec.Spec {
@@ -71,6 +76,11 @@ func testArtifactBuildCacheDir(ctx context.Context, t *testing.T, cfg targetConf
 		if c.GoBuild != nil {
 			return "${GOCACHE}"
 		}
+		if c.Bazel != nil {
+			// There is no good way to determine the bazel cache dir
+			// So just hardcode this for now
+			return "/tmp/dalec/bazel-local-cache"
+		}
 		t.Fatalf("invalid cache config or maybe the test needs to be updated for a new cache type?")
 		return ""
 	}
@@ -82,7 +92,12 @@ func testArtifactBuildCacheDir(ctx context.Context, t *testing.T, cfg targetConf
 	// Makes sure the cache is populated with some data.
 	populateCache := func(ctx context.Context, t *testing.T, client gwclient.Client) {
 		for i, c := range caches {
-			cmds = append(cmds, fmt.Sprintf("echo %s %d > \"%s/hello\"", distro, i, getDir(t, c)))
+			dir := getDir(t, c)
+			cmds = append(cmds, fmt.Sprintf("echo %s %d > \"%s/hello\"", distro, i, dir))
+
+			if c.Bazel != nil {
+				cmds = append(cmds, fmt.Sprintf("grep %q /etc/bazel.bazelrc && exit; cat /etc/bazel.bazelrc; exit 42", dir))
+			}
 		}
 
 		spec := specWithCommand(cmds...)
@@ -124,13 +139,13 @@ func testArtifactBuildCacheDir(ctx context.Context, t *testing.T, cfg targetConf
 				continue
 			}
 
-			// We can't test gobuild here because it will have a different cache key due to using a different distro
-			if c.GoBuild == nil {
+			switch {
+			case c.Dir != nil:
 				// Use the *original* distro name here since that is what wrote the file
 				check := fmt.Sprintf("%s %d", distro, i)
 				cmds = append(cmds, fmt.Sprintf("grep %q %s", check, filepath.Join(dir, "hello")))
-			} else {
-				// This should not exist because the gobuild cache is not shared between distros
+			case c.GoBuild != nil || c.Bazel != nil:
+				// This should not exist because the cache is not shared between distros
 				cmds = append(cmds, fmt.Sprintf("[ ! -f %q ]", filepath.Join(dir, "hello")))
 			}
 		}
@@ -198,6 +213,92 @@ func testAutoGobuildCache(ctx context.Context, t *testing.T, cfg targetConfig) {
 
 		// Also make sure there is no autocache when there is no golang dependency
 		spec = specWithCommand("[ -z \"${GOCACHE}\" ]")
+		spec.Dependencies = nil
+		sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Package))
+		solveT(ctx, t, client, sr)
+	})
+}
+
+func testAutoBazelLocalCache(ctx context.Context, t *testing.T, cfg targetConfig) {
+	ctx = startTestSpan(ctx, t)
+
+	bzlPkg := cfg.GetPackage("bazel")
+	if bzlPkg == "" {
+		t.Skip("Bazel is not available for this distro")
+	}
+
+	specWithCommand := func(cmd string) *dalec.Spec {
+		spec := newSimpleSpec()
+		spec.Dependencies = &dalec.PackageDependencies{}
+		spec.Dependencies.Build = map[string]dalec.PackageConstraints{
+			cfg.GetPackage(bzlPkg): {},
+		}
+
+		spec.Sources["src"] = dalec.Source{
+			Inline: &dalec.SourceInline{
+				Dir: &dalec.SourceInlineDir{
+					Files: map[string]*dalec.SourceInlineFile{
+						"WORKSPACE": {
+							Contents: "workspace(name = \"hello\")\n",
+						},
+						"BUILD": {
+							Contents: `
+genrule(
+    name = "hello",
+    outs = ["hello.txt"],
+    cmd = "echo 'hello from bazel' > $@",
+)
+`,
+						},
+						"hello.txt": {
+							Contents: "hello\n",
+						},
+					},
+				},
+			},
+		}
+
+		spec.Build.Steps = append(spec.Build.Steps, dalec.BuildStep{
+			Command: cmd,
+		})
+		return spec
+	}
+
+	testEnv.RunTest(ctx, t, func(ctx context.Context, client gwclient.Client) {
+		dirCmd := "dir=$(grep disk_cache /etc/bazel.bazelrc | awk -F'=' '{ print $2 }')\n"
+
+		buf := bytes.NewBuffer(nil)
+		buf.WriteString("set -ex;\n")
+		buf.WriteString(dirCmd)
+		buf.WriteString("cd src\n")
+		buf.WriteString("bazel build --announce_rc //:hello\n")
+		// bazel should write these to directories to the disk cache
+		buf.WriteString("[ -d ${dir}/ac ]; [ -d ${dir}/cas ]\n")
+
+		spec := specWithCommand(buf.String())
+		// Set ignore cache to make sure we always run the command so the cache is guaranteed to be populated
+		sr := newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Package), withIgnoreCache(targets.IgnoreCacheKeyPkg))
+		solveT(ctx, t, client, sr)
+
+		buf.Reset()
+		buf.WriteString("set -ex;\n")
+		buf.WriteString(dirCmd)
+		buf.WriteString("[ -d ${dir}/ac ]; [ -d ${dir}/cas ]\n")
+		spec = specWithCommand(buf.String())
+
+		sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Package))
+		solveT(ctx, t, client, sr)
+
+		// Now disable the auto gobuild cache
+		spec = specWithCommand("[ ! -f /etc/bazel.bazelrc ]")
+		spec.Build.Caches = []dalec.CacheConfig{
+			{Bazel: &dalec.BazelLocalCache{Disabled: true}},
+		}
+		sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Package))
+		solveT(ctx, t, client, sr)
+
+		// Also make sure there is no autocache when there is no bazel dependency
+		spec = specWithCommand("[ ! -f /etc/bazel.bazelrc ]")
 		spec.Dependencies = nil
 		sr = newSolveRequest(withSpec(ctx, t, spec), withBuildTarget(cfg.Package))
 		solveT(ctx, t, client, sr)

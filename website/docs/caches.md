@@ -72,3 +72,39 @@ caches:
   - gobuild:
       disabled: true
 ```
+
+## Bazel Local cache
+
+The bazel local cache is a special type of cache that is used to cache the results of
+the `bazel build` command.
+
+```yaml
+caches:
+  - bazel-local:
+```
+
+Bazel local caches are always in `shared` mode and are always namespaced with the OS and CPU architecture.
+This relies on setting the `--disk_cache` flag on `bazel build` by adding it to the *system* bazelrc file
+when dalec sets up the build environment.
+Dalec does not check if this is overwritten in the user or project bazelrc files.
+If this conflicts with your project, you may need to manually manage the bazel cache with a [cache dir](#dir-cache).
+
+An optional `scope` can be provided which is added to the generated cache key.
+This is intended for internal testing purposes, however may be useful for other
+use-cases as well.
+
+```yaml
+caches:
+  - bazel-local:
+      scope: my_scope
+```
+
+Finally, when bazel is detected in the build environment dalec will automatically
+create a bazel cache for you. This can be disabled by setting the `disabled`
+option to `true` in the cache definition.
+
+```yaml
+caches:
+  - bazel-local:
+      disabled: true
+```

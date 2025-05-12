@@ -613,6 +613,11 @@ echo "$BAR" > bar.txt
 		ctx := startTestSpan(baseCtx, t)
 		testAutoGobuildCache(ctx, t, tcfg)
 	})
+	t.Run("auto bazel-local cache", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		testAutoBazelLocalCache(ctx, t, tcfg)
+	})
 }
 
 func prepareWindowsSigningState(ctx context.Context, t *testing.T, gwc gwclient.Client, spec *dalec.Spec, extraSrOpts ...srOpt) llb.State {
