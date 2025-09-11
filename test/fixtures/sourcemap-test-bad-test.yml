@@ -1,0 +1,30 @@
+# syntax=ghcr.io/azure/dalec/frontend:latest
+
+name: sourcemap-test-testfail
+description: Test spec with intentionally failing test to verify source maps
+website: https://example.com
+version: 1.0.0
+revision: 1
+vendor: Test
+packager: Test Packager
+license: MIT
+
+# This spec is designed to fail during test execution
+# to test that source maps correctly point to the failing test
+build:
+  steps:
+    - command: |
+        echo "Build completed successfully"
+
+dependencies:
+  test:
+    - bash
+
+tests:
+  - name: passing-test
+    steps:
+      - command: /bin/sh -c "echo hello"
+  - name: failing-test
+    steps:
+      - command: /another/nonexistent/command
+      - command: /also/does/not/exist

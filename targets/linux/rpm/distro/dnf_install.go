@@ -226,14 +226,32 @@ func (cfg *Config) installBuildDepsPackage(worker llb.State, target string, pack
 	return func(ctx context.Context, client gwclient.Client, sOpt dalec.SourceOpts) (llb.RunOption, error) {
 		pg := dalec.ProgressGroup("Building container for build dependencies")
 
+		// Add source map constraints for each dependency before building the package
+		var buildConstraints []llb.ConstraintsOpt
+		buildConstraints = append(buildConstraints, pg)
+
+		// Apply source map constraints for each dependency to the build process
+		for depName := range deps {
+			if sourceMapConstraint := dalec.GetSourceMapConstraintsForPath(ctx, &worker, "dependencies.build."+depName); sourceMapConstraint != nil {
+				buildConstraints = append(buildConstraints, sourceMapConstraint)
+			}
+		}
+
 		// create an RPM with just the build dependencies, using our same base worker
-		rpmDir, err := cfg.BuildPkg(ctx, client, worker, sOpt, &depsOnly, target, pg)
+		rpmDir, err := cfg.BuildPkg(ctx, client, worker, sOpt, &depsOnly, target, buildConstraints...)
 		if err != nil {
 			return nil, err
 		}
 
 		var opts []llb.ConstraintsOpt
 		opts = append(opts, dalec.ProgressGroup("Install build deps"))
+
+		// Also apply source map constraints to the installation step
+		for depName := range deps {
+			if sourceMapConstraint := dalec.GetSourceMapConstraintsForPath(ctx, &worker, "dependencies.build."+depName); sourceMapConstraint != nil {
+				opts = append(opts, sourceMapConstraint)
+			}
+		}
 
 		rpmMountDir := "/tmp/rpms"
 
@@ -266,6 +284,18 @@ func (cfg *Config) InstallBuildDeps(ctx context.Context, client gwclient.Client,
 		importRepos := []DnfInstallOpt{DnfWithMounts(repoMounts), DnfImportKeys(keyPaths)}
 
 		opts = append(opts, dalec.ProgressGroup("Install build deps"))
+
+		// Add merged source map constraints for all build dependencies
+		var depPaths []string
+		for depName := range deps {
+			depPaths = append(depPaths, "dependencies.build."+depName)
+		}
+		if len(depPaths) > 0 {
+			if mergedConstraints := dalec.GetMergedSourceMapConstraintsForPaths(ctx, &in, depPaths); mergedConstraints != nil {
+				opts = append(opts, mergedConstraints)
+			}
+		}
+
 		installOpt, err := cfg.installBuildDepsPackage(in, targetKey, spec.Name, deps,
 			append(importRepos, dnfInstallWithConstraints(opts))...)(ctx, client, sOpt)
 		if err != nil {

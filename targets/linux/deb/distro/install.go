@@ -129,11 +129,22 @@ aptitude install -y -f -o "Aptitude::ProblemResolver::Hints::=reject ${pkg_name}
 	})
 }
 
-func (d *Config) InstallBuildDeps(sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, opts ...llb.ConstraintsOpt) llb.StateOption {
+func (d *Config) InstallBuildDeps(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, targetKey string, opts ...llb.ConstraintsOpt) llb.StateOption {
 	return func(in llb.State) llb.State {
 		buildDeps := spec.GetBuildDeps(targetKey)
 		if len(buildDeps) == 0 {
 			return in
+		}
+
+		// Add merged source map constraints for all build dependencies
+		var depPaths []string
+		for depName := range buildDeps {
+			depPaths = append(depPaths, "dependencies.build."+depName)
+		}
+		if len(depPaths) > 0 {
+			if mergedConstraints := dalec.GetMergedSourceMapConstraintsForPaths(ctx, &in, depPaths); mergedConstraints != nil {
+				opts = append(opts, mergedConstraints)
+			}
 		}
 
 		depsSpec := &dalec.Spec{

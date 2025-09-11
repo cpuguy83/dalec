@@ -79,6 +79,40 @@ func LoadSpec(ctx context.Context, client *dockerui.Client, platform *ocispecs.P
 	return spec, nil
 }
 
+// LoadSpecWithSourceMap loads a spec with source map information for better error reporting
+func LoadSpecWithSourceMap(ctx context.Context, client *dockerui.Client, platform *ocispecs.Platform, opts ...LoadOpt) (*dalec.Spec, *dalec.SourceMapInfo, error) {
+	cfg := LoadConfig{}
+
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	src, err := client.ReadEntrypoint(ctx, "Dockerfile")
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not read spec file: %w", err)
+	}
+
+	data := bytes.TrimSpace(src.Data)
+	spec, sourceMapInfo, err := dalec.LoadSpecWithSourceMap(src.Filename, data)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error loading spec: %w", err)
+	}
+
+	args := dalec.DuplicateMap(client.BuildArgs)
+	if platform == nil {
+		p := platforms.DefaultSpec()
+		platform = &p
+	}
+
+	fillPlatformArgs("TARGET", args, *platform)
+	fillPlatformArgs("BUILD", args, client.BuildPlatforms[0])
+
+	if err := spec.SubstituteArgs(args, cfg.SubstituteOpts...); err != nil {
+		return nil, nil, errors.Wrap(err, "error resolving build args")
+	}
+	return spec, sourceMapInfo, nil
+}
+
 func getOS(platform ocispecs.Platform) string {
 	return platform.OS
 }
@@ -148,10 +182,16 @@ func BuildWithPlatformFromUIClient(ctx context.Context, client gwclient.Client, 
 			}
 		}()
 
-		spec, err := LoadSpec(ctx, dc, platform)
+		spec, sourceMapInfo, err := LoadSpecWithSourceMap(ctx, dc, platform)
 		if err != nil {
 			return nil, nil, nil, err
 		}
+
+		// Store source map info in context for use by target handlers
+		if sourceMapInfo != nil {
+			ctx = dalec.WithSourceMapContext(ctx, sourceMapInfo)
+		}
+
 		targetKey := GetTargetKey(dc)
 
 		ref, cfg, err := f(ctx, client, platform, spec, targetKey)

@@ -2,6 +2,7 @@ package distro
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 
 	"github.com/Azure/dalec"
@@ -61,7 +62,20 @@ func (c *Config) BuildPkg(ctx context.Context, client gwclient.Client, worker ll
 		addGoCache(&cacheInfo)
 	}
 
-	st := rpm.Build(br, builder, specPath, cacheInfo, opts...)
+	// Add source map constraints for build steps
+	buildOpts := opts
+	// Create individual constraints for each build step
+	var buildStepPaths []string
+	for i := range spec.Build.Steps {
+		buildStepPaths = append(buildStepPaths, fmt.Sprintf("build.steps[%d]", i))
+	}
+	if len(buildStepPaths) > 0 {
+		if constraint := dalec.GetMergedSourceMapConstraintsForPaths(ctx, &builder, buildStepPaths); constraint != nil {
+			buildOpts = append(buildOpts, constraint)
+		}
+	}
+
+	st := rpm.Build(br, builder, specPath, cacheInfo, buildOpts...)
 
 	return frontend.MaybeSign(ctx, client, st, spec, targetKey, sOpt, opts...)
 }

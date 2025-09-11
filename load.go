@@ -294,6 +294,21 @@ func LoadSpec(dt []byte) (*Spec, error) {
 	return &spec, nil
 }
 
+// LoadSpecWithSourceMap loads a spec from the given data and creates source map information.
+func LoadSpecWithSourceMap(filename string, dt []byte) (*Spec, *SourceMapInfo, error) {
+	spec, err := LoadSpec(dt)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	sourceMapInfo, err := NewSourceMapInfo(filename, dt)
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "error creating source map")
+	}
+
+	return spec, sourceMapInfo, nil
+}
+
 // rawYAML is similar to json.RawMessage
 // We use this to store the raw yaml data for extension fields
 type rawYAML []byte

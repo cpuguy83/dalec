@@ -7,7 +7,6 @@ import (
 	"path"
 	"path/filepath"
 	"strconv"
-	"sync"
 
 	"github.com/Azure/dalec"
 	"github.com/google/shlex"
@@ -16,6 +15,7 @@ import (
 	"github.com/moby/buildkit/identity"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
+	"golang.org/x/sync/errgroup"
 )
 
 // Run tests runs the tests defined in the spec against the given target container.
@@ -70,7 +70,7 @@ func RunTests(ctx context.Context, client gwclient.Client, spec *dalec.Spec, ref
 	ctrWithDeps := ctr.With(withTestDeps)
 
 	runs := make([]testPair, 0, len(tests))
-	for _, test := range tests {
+	for testIndex, test := range tests {
 		base := ctr
 		for k, v := range test.Env {
 			base = base.AddEnv(k, v)
@@ -78,6 +78,21 @@ func RunTests(ctx context.Context, client gwclient.Client, spec *dalec.Spec, ref
 
 		var opts []llb.RunOption
 		pg := llb.ProgressGroup(identity.NewID(), "Test: "+path.Join(target, test.Name), false)
+
+		// Add source map constraints for this specific test (covering all steps)
+		var constraintsOpts []llb.ConstraintsOpt
+		testPath := dalec.GetTestPath(testIndex)
+		if constraint := dalec.GetSourceMapConstraintsForPath(ctx, &ctr, testPath); constraint != nil {
+			constraintsOpts = append(constraintsOpts, constraint)
+		}
+		// Also try to add constraints for all steps in this test
+		for stepIdx := range test.Steps {
+			stepPath := dalec.GetTestStepPath(testIndex, stepIdx)
+			if constraint := dalec.GetSourceMapConstraintsForPath(ctx, &ctr, stepPath); constraint != nil {
+				constraintsOpts = append(constraintsOpts, constraint)
+			}
+		}
+		constraintsOpts = append(constraintsOpts, pg, dalec.Platform(platform))
 
 		for _, sm := range test.Mounts {
 			opts = append(opts, sm.ToRunOption(sOpt, pg))
@@ -135,6 +150,12 @@ func RunTests(ctx context.Context, client gwclient.Client, spec *dalec.Spec, ref
 				}))
 				stepOpts = append(opts, stepOpts...)
 
+				// Apply source map constraints for this specific test step
+				stepPath := dalec.GetTestStepPath(testIndex, i)
+				if constraint := dalec.GetSourceMapConstraintsForPath(ctx, &ctr, stepPath); constraint != nil {
+					stepOpts = append(stepOpts, dalec.WithConstraints(constraint))
+				}
+
 				est := worker.Run(stepOpts...)
 				if needsStdioMount {
 					ioSt = est.AddMount(filepath.Join("/tmp", id), ioSt)
@@ -143,28 +164,23 @@ func RunTests(ctx context.Context, client gwclient.Client, spec *dalec.Spec, ref
 				worker = est.Root()
 			}
 
-			runs = append(runs, testPair{st: worker, t: test, stdios: ios, opts: []llb.ConstraintsOpt{pg, dalec.Platform(platform)}})
+			runs = append(runs, testPair{st: worker, t: test, stdios: ios, opts: constraintsOpts})
 		} else {
-			runs = append(runs, testPair{st: base, t: test, opts: []llb.ConstraintsOpt{pg, dalec.Platform(platform)}})
+			runs = append(runs, testPair{st: base, t: test, opts: constraintsOpts})
 		}
 	}
 
-	var errs errorList
-	var wg sync.WaitGroup
+	group, ctx := errgroup.WithContext(ctx)
 	for _, pair := range runs {
-		pair := pair
-		wg.Add(1)
-		go func() {
+		group.Go(func() error {
 			if err := runTest(ctx, pair.t, pair.st, pair.stdios, client, pair.opts...); err != nil {
-				errs.Append(errors.Wrap(err, "FAILED: "+path.Join(target, pair.t.Name)))
+				return errors.Wrap(err, "FAILED: "+path.Join(target, pair.t.Name))
 			}
-			wg.Done()
-		}()
+			return nil
+		})
 	}
 
-	wg.Wait()
-
-	return errs.Join()
+	return group.Wait()
 }
 
 func runTest(ctx context.Context, t *dalec.TestSpec, st llb.State, ios map[int]llb.State, client gwclient.Client, opts ...llb.ConstraintsOpt) error {
@@ -265,29 +281,4 @@ func runTest(ctx context.Context, t *dalec.TestSpec, st llb.State, ios map[int]l
 	}
 
 	return outErr
-}
-
-type errorList struct {
-	mu sync.Mutex
-	ls []error
-}
-
-func (e *errorList) Append(err error) {
-	if err == nil {
-		return
-	}
-	e.mu.Lock()
-	e.ls = append(e.ls, err)
-	e.mu.Unlock()
-}
-
-func (e *errorList) Join() error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	if len(e.ls) == 0 {
-		return nil
-	}
-
-	return stderrors.Join(e.ls...)
 }

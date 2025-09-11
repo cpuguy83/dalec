@@ -2,6 +2,7 @@ package distro
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"strings"
@@ -33,7 +34,7 @@ func (d *Config) BuildPkg(ctx context.Context, client gwclient.Client, worker ll
 		}
 	}
 
-	worker = worker.With(d.InstallBuildDeps(sOpt, spec, targetKey, append(opts, frontend.IgnoreCache(client))...))
+	worker = worker.With(d.InstallBuildDeps(ctx, sOpt, spec, targetKey, append(opts, frontend.IgnoreCache(client))...))
 
 	var cfg deb.SourcePkgConfig
 	extraPaths, err := prepareGo(ctx, client, &cfg, worker, spec, targetKey, opts...)
@@ -48,7 +49,20 @@ func (d *Config) BuildPkg(ctx context.Context, client gwclient.Client, worker ll
 
 	builder := worker.With(dalec.SetBuildNetworkMode(spec))
 
-	st, err := deb.BuildDeb(builder, spec, srcPkg, versionID, append(opts, frontend.IgnoreCache(client, targets.IgnoreCacheKeyPkg))...)
+	// Add source map constraints for build steps
+	buildOpts := opts
+	// Create individual constraints for each build step
+	var buildStepPaths []string
+	for i := range spec.Build.Steps {
+		buildStepPaths = append(buildStepPaths, fmt.Sprintf("build.steps[%d]", i))
+	}
+	if len(buildStepPaths) > 0 {
+		if constraint := dalec.GetMergedSourceMapConstraintsForPaths(ctx, &builder, buildStepPaths); constraint != nil {
+			buildOpts = append(buildOpts, constraint)
+		}
+	}
+
+	st, err := deb.BuildDeb(builder, spec, srcPkg, versionID, append(buildOpts, frontend.IgnoreCache(client, targets.IgnoreCacheKeyPkg))...)
 	if err != nil {
 		return llb.Scratch(), err
 	}
@@ -213,7 +227,7 @@ func (cfg *Config) HandleSourcePkg(ctx context.Context, client gwclient.Client) 
 			return nil, nil, err
 		}
 
-		worker = worker.With(cfg.InstallBuildDeps(sOpt, spec, targetKey, pg, frontend.IgnoreCache(client)))
+		worker = worker.With(cfg.InstallBuildDeps(ctx, sOpt, spec, targetKey, pg, frontend.IgnoreCache(client)))
 
 		var cfg deb.SourcePkgConfig
 		extraPaths, err := prepareGo(ctx, client, &cfg, worker, spec, targetKey, pg, frontend.IgnoreCache(client))
