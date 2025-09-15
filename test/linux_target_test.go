@@ -2999,10 +2999,7 @@ func testLinuxPackageTestsFail(ctx context.Context, t *testing.T, cfg testLinuxC
 				},
 			},
 			Dependencies: &dalec.PackageDependencies{
-				Test: []string{
-					"bash",
-					"grep",
-				},
+				Test: map[string]dalec.PackageConstraints{"bash": {}, "grep": {}},
 			},
 			Artifacts: dalec.Artifacts{
 				DataDirs: map[string]dalec.ArtifactConfig{
