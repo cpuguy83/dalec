@@ -135,7 +135,20 @@ func importGPGScript(keyPaths []string) string {
 	importScript := "#!/usr/bin/env sh\nset -eux\n"
 	for _, keyPath := range keyPaths {
 		keyName := filepath.Base(keyPath)
-		importScript += fmt.Sprintf("gpg --import %s\n", filepath.Join(keyRoot, keyName))
+		fullPath := filepath.Join(keyRoot, keyName)
+		// rpm --import requires armored keys, check if key is armored and convert if needed
+		importScript += fmt.Sprintf(`
+if head -1 %s | grep -q 'BEGIN PGP PUBLIC KEY BLOCK'; then
+  gpg --import %s
+  rpm --import %s
+else
+  # Import to gpg
+  gpg --import %s
+  # Export to file then import to rpm (workaround for gpg export to stdout issues)
+  gpg --armor --export > /tmp/key.asc
+  rpm --import /tmp/key.asc
+fi
+`, fullPath, fullPath, fullPath, fullPath)
 	}
 
 	return importScript
@@ -243,10 +256,75 @@ func (cfg *Config) WithDeps(sOpt dalec.SourceOpts, targetKey, pkgName string, de
 
 		const rpmMountDir = "/tmp/internal/dalec/deps/install/rpms"
 
+		// Sign the wrapper RPM so it can pass GPG checks
+		pg := dalec.ProgressGroup("Sign wrapper dependency package")
+
+		// Generate GPG key and export it
+		gpgKeyScriptDt := `#!/usr/bin/env sh
+set -exu
+
+gpg --batch --gen-key <<EOF
+Key-Type: RSA
+Key-Length: 2048
+Name-Real: Dalec Dependencies
+Name-Email: dalec-deps@local
+Expire-Date: 0
+%no-protection
+%commit
+EOF
+`
+		gpgKeyScript := llb.Scratch().File(
+			llb.Mkfile("create-gpg.sh", 0o700, []byte(gpgKeyScriptDt)),
+			pg,
+			dalec.WithConstraints(opts...),
+		)
+		const scriptPath = "/tmp/dalec/internal/dnf/create-gpg.sh"
+		inWithGPG := in.
+			Run(
+				llb.Args([]string{scriptPath}),
+				llb.AddMount(scriptPath, gpgKeyScript, llb.SourcePath("create-gpg.sh"), llb.Readonly),
+			)
+
+		gpgKey := inWithGPG.Run(
+			dalec.ShArgs(`gpg --armor --export dalec-deps@local > /tmp/out/deps.asc`),
+		).AddMount("/tmp/out", llb.Scratch())
+
+		const signPkgScriptDt = `
+if ! command -v rpmsign >/dev/null 2>&1; then
+	echo "rpmsign not found, cannot sign packages" >&2
+	echo "Package installation may fail if GPG checks are enabled" >&2
+	exit 0
+fi
+
+set -exu
+ID=$(gpg --list-keys --keyid-format LONG | grep -B 2 'dalec-deps@local' | grep 'pub' | awk '{print $2}' | cut -d'/' -f2)
+if [ -z "$ID" ]; then
+	echo "Failed to find GPG key ID" >&2
+	exit 42
+fi
+echo "%_gpg_name $ID" > ~/.rpmmacros
+find /tmp/out -name "*.rpm" -exec rpmsign --addsign {} \;
+`
+		signPkgScript := llb.Scratch().File(
+			llb.Mkfile("sign-packages.sh", 0o700, []byte(signPkgScriptDt)),
+			pg,
+			dalec.WithConstraints(opts...),
+		)
+		const signPkgScriptPath = "/tmp/dalec/internal/dnf/sign-packages.sh"
+
+		rpmDir = inWithGPG.Run(
+			dalec.ShArgs(signPkgScriptPath),
+			llb.AddMount(signPkgScriptPath, signPkgScript, llb.SourcePath("sign-packages.sh"), llb.Readonly),
+			pg,
+		).AddMount("/tmp/out", rpmDir)
+
 		repoMounts, keyPaths := cfg.RepoMounts(repos, sOpt, opts...)
+		keyMountPath := filepath.Join(cfg.RepoPlatformConfig.GPGKeyRoot, "_internal_dalec_deps.asc")
+		keyPaths = append(keyPaths, keyMountPath)
 
 		installOpts := []DnfInstallOpt{
 			DnfWithMounts(llb.AddMount(rpmMountDir, rpmDir, llb.SourcePath("/RPMS"), llb.Readonly)),
+			DnfWithMounts(llb.AddMount(keyMountPath, gpgKey, llb.SourcePath("/deps.asc"), llb.Readonly)),
 			DnfWithMounts(repoMounts),
 			DnfImportKeys(keyPaths),
 		}
