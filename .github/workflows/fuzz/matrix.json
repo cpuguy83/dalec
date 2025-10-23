@@ -1,0 +1,16 @@
+{
+  "include": [
+    {
+      "pkg": ".",
+      "fuzz": "FuzzLoadSpec"
+    },
+    {
+      "pkg": ".",
+      "fuzz": "FuzzSourceInline"
+    },
+    {
+      "pkg": ".",
+      "fuzz": "FuzzSpecSubstituteArgs"
+    }
+  ]
+}
