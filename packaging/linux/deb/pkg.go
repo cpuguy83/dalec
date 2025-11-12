@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/project-dalec/dalec"
 	"github.com/moby/buildkit/client/llb"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
+	"github.com/project-dalec/dalec"
 )
 
 const (
@@ -22,6 +23,20 @@ const (
 	pipDepsName = "xxxdalecPipDepsInternal"
 )
 
+var debArchMap = map[string]string{
+	"amd64":   "amd64",
+	"arm64":   "arm64",
+	"ppc64le": "ppc64el",
+	"s390x":   "s390x",
+	"riscv64": "riscv64",
+}
+
+var debArchVariantMap = map[string]map[string]string{
+	"arm": {
+		"v7": "armhf",
+	},
+}
+
 func mountSources(sources map[string]llb.State, dir string, mod func(string) string) llb.RunOption {
 	return dalec.RunOptFunc(func(ei *llb.ExecInfo) {
 		for key, src := range sources {
@@ -34,6 +49,39 @@ func mountSources(sources map[string]llb.State, dir string, mod func(string) str
 }
 
 var errMissingRequiredField = fmt.Errorf("missing required field")
+
+func dpkgHostArchFlag(targetPlatform ocispecs.Platform) (string, error) {
+	if targetPlatform.Architecture == "" {
+		return "", nil
+	}
+	arch, err := debArchFromPlatform(targetPlatform)
+	if err != nil {
+		return "", err
+	}
+	return " --host-arch " + arch, nil
+}
+
+func debArchFromPlatform(p ocispecs.Platform) (string, error) {
+	if p.Architecture == "" {
+		return "", fmt.Errorf("target platform missing architecture")
+	}
+
+	if variants, ok := debArchVariantMap[p.Architecture]; ok {
+		if p.Variant == "" {
+			return "", fmt.Errorf("target variant required for architecture %q", p.Architecture)
+		}
+		if mapped, ok := variants[p.Variant]; ok {
+			return mapped, nil
+		}
+		return "", fmt.Errorf("unsupported variant %q for architecture %q", p.Variant, p.Architecture)
+	}
+
+	if mapped, ok := debArchMap[p.Architecture]; ok {
+		return mapped, nil
+	}
+
+	return "", fmt.Errorf("unsupported target architecture %q", p.Architecture)
+}
 
 func validateSpec(spec *dalec.Spec) error {
 	if spec.Packager == "" {
@@ -85,8 +133,12 @@ func nestState(dest string) llb.StateOption {
 	}
 }
 
-func SourcePackage(ctx context.Context, sOpt dalec.SourceOpts, worker llb.State, spec *dalec.Spec, targetKey, distroVersionID string, cfg SourcePkgConfig, opts ...llb.ConstraintsOpt) (llb.State, error) {
+func SourcePackage(ctx context.Context, sOpt dalec.SourceOpts, worker llb.State, spec *dalec.Spec, targetKey, distroVersionID string, cfg SourcePkgConfig, targetPlatform ocispecs.Platform, opts ...llb.ConstraintsOpt) (llb.State, error) {
 	if err := validateSpec(spec); err != nil {
+		return llb.Scratch(), err
+	}
+	hostFlag, err := dpkgHostArchFlag(targetPlatform)
+	if err != nil {
 		return llb.Scratch(), err
 	}
 	dr, err := Debroot(ctx, sOpt, spec, worker, llb.Scratch(), targetKey, "", distroVersionID, cfg, opts...)
@@ -150,8 +202,9 @@ func SourcePackage(ctx context.Context, sOpt dalec.SourceOpts, worker llb.State,
 
 	patches := createPatches(spec, sources, worker, dr, opts...)
 
+	buildpkg := fmt.Sprintf("set -e; dpkg-buildpackage%s -S -us -uc; mkdir -p /tmp/out; cp -r /work/%s_%s* /tmp/out", hostFlag, spec.Name, spec.Version)
 	work := worker.Run(
-		dalec.ShArgs("set -e; dpkg-buildpackage -S -us -uc; mkdir -p /tmp/out; cp -r /work/"+spec.Name+"_"+spec.Version+"* /tmp/out"),
+		dalec.ShArgs(buildpkg),
 		llb.Dir("/work/pkg"),
 		llb.AddMount("/work/pkg/debian", dr, llb.SourcePath("debian")), // This cannot be readonly because the debian directory gets modified by dpkg-buildpackage
 		llb.AddMount("/work/pkg/debian/patches", patches, llb.Readonly),
@@ -165,11 +218,16 @@ func SourcePackage(ctx context.Context, sOpt dalec.SourceOpts, worker llb.State,
 	return work.AddMount("/tmp/out", llb.Scratch()), nil
 }
 
-func BuildDebBinaryOnly(worker llb.State, spec *dalec.Spec, debroot llb.State, distroVersionID string, opts ...llb.ConstraintsOpt) (llb.State, error) {
+func BuildDebBinaryOnly(worker llb.State, spec *dalec.Spec, debroot llb.State, distroVersionID string, targetPlatform ocispecs.Platform, opts ...llb.ConstraintsOpt) (llb.State, error) {
 	dirName := filepath.Join("/work", spec.Name+"_"+spec.Version+"-"+spec.Revision)
+	hostFlag, err := dpkgHostArchFlag(targetPlatform)
+	if err != nil {
+		return llb.Scratch(), err
+	}
+	cmd := fmt.Sprintf("set -e; dpkg-buildpackage%s -b -uc -us; mkdir -p /tmp/out; cp ../*.deb /tmp/out", hostFlag)
 	st := worker.
 		Run(
-			dalec.ShArgs("set -e; dpkg-buildpackage -b -uc -us; mkdir -p /tmp/out; cp ../*.deb /tmp/out"),
+			dalec.ShArgs(cmd),
 			llb.Dir(dirName),
 			llb.AddMount(dirName, debroot),
 			dalec.WithConstraints(opts...),
@@ -178,12 +236,17 @@ func BuildDebBinaryOnly(worker llb.State, spec *dalec.Spec, debroot llb.State, d
 	return st, nil
 }
 
-func BuildDeb(worker llb.State, spec *dalec.Spec, srcPkg llb.State, distroVersionID string, opts ...llb.ConstraintsOpt) (llb.State, error) {
+func BuildDeb(worker llb.State, spec *dalec.Spec, srcPkg llb.State, distroVersionID string, targetPlatform ocispecs.Platform, opts ...llb.ConstraintsOpt) (llb.State, error) {
 	dirName := filepath.Join("/work", spec.Name+"_"+spec.Version+"-"+spec.Revision)
 	buildRootRel := spec.Name + "-" + spec.Version
+	hostFlag, err := dpkgHostArchFlag(targetPlatform)
+	if err != nil {
+		return llb.Scratch(), err
+	}
+	cmd := fmt.Sprintf("set -e; dpkg-source -x ./*.dsc; cd %s; dpkg-buildpackage%s -b -uc -us; mkdir -p /tmp/out; cp ../*.deb /tmp/out", buildRootRel, hostFlag)
 	st := worker.
 		Run(
-			dalec.ShArgs("set -e; dpkg-source -x ./*.dsc; cd "+buildRootRel+"; dpkg-buildpackage -b -uc -us; mkdir -p /tmp/out; cp ../*.deb /tmp/out"),
+			dalec.ShArgs(cmd),
 			llb.Dir(dirName),
 			llb.AddMount(dirName, srcPkg),
 			dalec.WithConstraints(opts...),
