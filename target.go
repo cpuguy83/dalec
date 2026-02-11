@@ -27,6 +27,12 @@ type Target struct {
 	// Image is the image configuration when the target output is a container image.
 	Image *ImageConfig `yaml:"image,omitempty" json:"image,omitempty"`
 
+	// Images provides per-distro overrides for named image definitions.
+	// Keys must match keys in [Spec.Images]. Each entry can override
+	// image configuration fields, packages, and tests for that named
+	// image on this target.
+	Images map[string]ImageDefinition `yaml:"images,omitempty" json:"images,omitempty"`
+
 	// Frontend is the frontend configuration to use for the target.
 	// This is used to forward the build to a different, dalec-compatible frontend.
 	// This can be useful when testing out new distros or using a different version of the frontend for a given distro.
@@ -82,6 +88,12 @@ func (t *Target) validate() error {
 	for key, pkg := range t.Packages {
 		if err := pkg.validate(); err != nil {
 			errs = append(errs, errors.Wrapf(err, "package %s", key))
+		}
+	}
+
+	for key, img := range t.Images {
+		if err := img.validate(); err != nil {
+			errs = append(errs, errors.Wrapf(err, "image %s", key))
 		}
 	}
 
@@ -150,6 +162,13 @@ func (t *Target) processBuildArgs(lex *shell.Lex, args map[string]string, allowA
 		t.Packages[key] = pkg
 	}
 
+	for key, img := range t.Images {
+		if err := img.processBuildArgs(lex, args, allowArg); err != nil {
+			errs = append(errs, errors.Wrapf(err, "image %s", key))
+		}
+		t.Images[key] = img
+	}
+
 	return goerrors.Join(errs...)
 }
 
@@ -160,5 +179,10 @@ func (t *Target) fillDefaults() {
 	for key, pkg := range t.Packages {
 		pkg.fillDefaults()
 		t.Packages[key] = pkg
+	}
+
+	for key, img := range t.Images {
+		img.fillDefaults()
+		t.Images[key] = img
 	}
 }

@@ -1323,6 +1323,133 @@
 			],
 			"description": "ImageConfig is the configuration for the output image."
 		},
+		"ImageDefinition": {
+			"properties": {
+				"base": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Deprecated: Use [Bases] instead."
+				},
+				"bases": {
+					"items": {
+						"$ref": "#/$defs/BaseImage"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Bases is used to specify a list of base images to build images for.  The\nintent of allowing multiple bases is for cases, such as Windows, where you\nmay want to publish multiple versions of a base image in one image.\n\nWindows is the example here because of the way Windows works, the image\nthat the base is based off of must match the OS version of the host machine.\nTherefore it is common to have multiple Windows images in one with a\ndifferent value for the os version field of the platform.\n\nFor the most part implementations are not expected to support multiple base\nimages and may error out if multiple are specified.\n\nThis should not be set if [Base] is also set."
+				},
+				"cmd": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Cmd sets the image's \"cmd\" field.\nWhen entrypoint is set, this is used as the default arguments to the entrypoint.\nWhen entrypoint is not set, this is used as the default command to run."
+				},
+				"entrypoint": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Entrypoint sets the image's \"entrypoint\" field.\nThis is used to control the default command to run when the image is run."
+				},
+				"env": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Env is the list of environment variables to set in the image."
+				},
+				"labels": {
+					"additionalProperties": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Labels is the list of labels to set in the image metadata."
+				},
+				"packages": {
+					"items": {
+						"type": [
+							"string"
+						]
+					},
+					"type": [
+						"array"
+					],
+					"description": "Packages specifies which packages from this spec to install in the\ncontainer image. Package names refer to the installed package names\n(e.g., \"foo\", \"foo-contrib\"), not the map keys from the packages field.\n\nIf omitted, all packages the spec produces (primary + all supplemental)\nare installed.\nIf present, only the listed packages are installed — the primary package\nis NOT implicitly included."
+				},
+				"post": {
+					"$ref": "#/$defs/PostInstall",
+					"description": "Post is the post install configuration for the image.\nThis allows making additional modifications to the container rootfs after the package(s) are installed.\n\nUse this to perform actions that would otherwise require additional tooling inside the container that is not relevant to\nthe resulting container and makes a post-install script as part of the package unnecessary."
+				},
+				"stop_signal": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "StopSignal is the signal to send to the container to stop it.\nThis is used to stop the container gracefully."
+				},
+				"tests": {
+					"items": {
+						"$ref": "#/$defs/TestSpec"
+					},
+					"type": [
+						"array"
+					],
+					"description": "Tests are image-specific tests that are appended to the root-level\nand target-level tests when building this named image."
+				},
+				"user": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "User is the that the image should run as."
+				},
+				"volumes": {
+					"additionalProperties": {
+						"additionalProperties": {
+							"not": {}
+						},
+						"type": [
+							"object",
+							"null"
+						]
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Volumes is the list of volumes for the image.\nVolumes instruct the runtime to bypass the any copy-on-write filesystems and mount the volume directly to the container."
+				},
+				"working_dir": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "WorkingDir is the working directory to set in the image.\nThis sets the directory the container will start in."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "ImageDefinition defines a named container image configuration."
+		},
 		"PackageConfig": {
 			"properties": {
 				"signer": {
@@ -2060,7 +2187,17 @@
 				},
 				"image": {
 					"$ref": "#/$defs/ImageConfig",
-					"description": "Image is the image configuration when the target output is a container image.\nThis is overwritten if specified in the target map for the requested distro."
+					"description": "Image is the image configuration when the target output is a container image.\nThis is overwritten if specified in the target map for the requested distro.\nWhen used together with Images, this serves as shared defaults that each\nnamed image definition merges on top of."
+				},
+				"images": {
+					"additionalProperties": {
+						"$ref": "#/$defs/ImageDefinition"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Images is the map of named container image definitions.\nEach entry defines a distinct container image that can be built from this\nspec's packages. Image names are used in target paths, e.g.,\n\"azlinux3/container/\u003cname\u003e\".\n\nWhen both Image and Images are present, Image provides shared defaults\nand each Images entry merges on top. Image alone is NOT built as a\ncontainer in that case — it only serves as a template."
 				},
 				"license": {
 					"type": [
@@ -2435,6 +2572,16 @@
 				"image": {
 					"$ref": "#/$defs/ImageConfig",
 					"description": "Image is the image configuration when the target output is a container image."
+				},
+				"images": {
+					"additionalProperties": {
+						"$ref": "#/$defs/ImageDefinition"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Images provides per-distro overrides for named image definitions.\nKeys must match keys in [Spec.Images]. Each entry can override\nimage configuration fields, packages, and tests for that named\nimage on this target."
 				},
 				"package_config": {
 					"$ref": "#/$defs/PackageConfig",

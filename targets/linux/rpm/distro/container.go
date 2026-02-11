@@ -80,6 +80,31 @@ func (cfg *Config) BuildContainer(ctx context.Context, client gwclient.Client, s
 	return rootfs
 }
 
+// FilterPackages filters the RPM package state to only include packages with
+// the given names. RPM filenames follow the pattern:
+//
+//	RPMS/<arch>/<name>-<version>-<release>.<dist>.<arch>.rpm
+//
+// We use <name>-<version>-* as the include pattern so that e.g. "foo-1.0.0-*"
+// does not accidentally match "foo-contrib-1.0.0-*".
+//
+// If packageNames is empty, the original pkgState is returned unchanged.
+func (cfg *Config) FilterPackages(pkgState llb.State, spec *dalec.Spec, packageNames []string, opts ...llb.ConstraintsOpt) llb.State {
+	if len(packageNames) == 0 {
+		return pkgState
+	}
+
+	includes := make([]string, 0, len(packageNames))
+	for _, name := range packageNames {
+		includes = append(includes, fmt.Sprintf("**/%s-%s-*.rpm", name, spec.Version))
+	}
+
+	return llb.Scratch().File(
+		llb.Copy(pkgState, "/", "/", dalec.WithIncludes(includes)),
+		dalec.WithConstraints(opts...),
+	)
+}
+
 func (cfg *Config) HandleDepsOnly(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 	return frontend.BuildWithPlatform(ctx, client, func(ctx context.Context, client gwclient.Client, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string) (gwclient.Reference, *dalec.DockerImageSpec, error) {
 		rtDeps := spec.GetPackageDeps(targetKey).GetRuntime()

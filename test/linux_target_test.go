@@ -3575,6 +3575,12 @@ func main() {
 		ctx := startTestSpan(baseCtx, t)
 		testSubPackages(ctx, t, testConfig)
 	})
+
+	t.Run("named images", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		testNamedImages(ctx, t, testConfig)
+	})
 }
 
 func testNodeNpmGenerator(ctx context.Context, t *testing.T, targetCfg targetConfig, opts ...srOpt) {

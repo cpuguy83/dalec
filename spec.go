@@ -96,7 +96,19 @@ type Spec struct {
 	PackageConfig *PackageConfig `yaml:"package_config,omitempty" json:"package_config,omitempty"`
 	// Image is the image configuration when the target output is a container image.
 	// This is overwritten if specified in the target map for the requested distro.
+	// When used together with Images, this serves as shared defaults that each
+	// named image definition merges on top of.
 	Image *ImageConfig `yaml:"image,omitempty" json:"image,omitempty"`
+
+	// Images is the map of named container image definitions.
+	// Each entry defines a distinct container image that can be built from this
+	// spec's packages. Image names are used in target paths, e.g.,
+	// "azlinux3/container/<name>".
+	//
+	// When both Image and Images are present, Image provides shared defaults
+	// and each Images entry merges on top. Image alone is NOT built as a
+	// container in that case — it only serves as a template.
+	Images map[string]ImageDefinition `yaml:"images,omitempty" json:"images,omitempty"`
 
 	// Changelog is the list of changes to the package.
 	Changelog []ChangelogEntry `yaml:"changelog,omitempty" json:"changelog,omitempty"`

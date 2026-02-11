@@ -764,6 +764,79 @@ func (s *Spec) GetSubPackageReplaces(sub, targetKey string) PackageDependencyLis
 	return sp.Replaces
 }
 
+// GetImageDefinition returns the fully resolved ImageDefinition for a named
+// image, applying the 3-level merge chain:
+//
+//	image (root defaults) → images.<name> → targets.<distro>.images.<name>
+//
+// The Packages field is NOT inherited from root image defaults — only the most
+// specific non-nil value is used (target > spec-level image definition).
+// Tests are collected from the image definition levels (spec + target).
+//
+// Returns nil if the named image does not exist in s.Images.
+func (s *Spec) GetImageDefinition(imageName, targetKey string) *ImageDefinition {
+	specDef, ok := s.Images[imageName]
+	if !ok {
+		return nil
+	}
+
+	// Start with root image defaults for ImageConfig.
+	var cfg ImageConfig
+	if s.Image != nil {
+		cfg = *s.Image
+	}
+
+	// Merge spec-level image definition's ImageConfig on top.
+	mergeImageConfigLayer(&cfg, &specDef.ImageConfig)
+
+	// Packages: start with spec-level definition (not inherited from root image).
+	packages := specDef.Packages
+
+	// Tests: start with spec-level image definition tests.
+	tests := append([]*TestSpec(nil), specDef.Tests...)
+
+	// Apply target-level overrides if present.
+	if t, ok := s.Targets[targetKey]; ok {
+		if targetDef, ok := t.Images[imageName]; ok {
+			mergeImageConfigLayer(&cfg, &targetDef.ImageConfig)
+
+			// Packages: target overrides spec-level if non-nil.
+			if targetDef.Packages != nil {
+				packages = targetDef.Packages
+			}
+
+			// Tests: append target-level image tests.
+			tests = append(tests, targetDef.Tests...)
+		}
+	}
+
+	return &ImageDefinition{
+		ImageConfig: cfg,
+		Packages:    packages,
+		Tests:       tests,
+	}
+}
+
+// GetNamedImagePost returns the Post from a resolved named image definition.
+// Returns nil if the image does not exist or has no Post.
+func (s *Spec) GetNamedImagePost(imageName, targetKey string) *PostInstall {
+	def := s.GetImageDefinition(imageName, targetKey)
+	if def == nil {
+		return nil
+	}
+	return def.Post
+}
+
+// GetNamedImageBases returns the Bases from a resolved named image definition.
+// Returns nil if the image does not exist or has no Bases.
+func (s *Spec) GetNamedImageBases(imageName, targetKey string) []BaseImage {
+	def := s.GetImageDefinition(imageName, targetKey)
+	if def == nil {
+		return nil
+	}
+	return def.Bases
+}
+
 func HasNpm(spec *Spec, targetKey string) bool {
 	for dep := range spec.GetPackageDeps(targetKey).GetBuild() {
 		switch dep {

@@ -51,10 +51,27 @@ type DistroConfig interface {
 	// Some distros may need to pass in a separate worker before mounting the target container.
 	RunTests(ctx context.Context, client gwclient.Client, spec *dalec.Spec, sOpt dalec.SourceOpts, ctr llb.State,
 		targetKey string, opts ...llb.ConstraintsOpt) llb.StateOption
+
+	// FilterPackages filters the package state to only include the packages
+	// with the given names. This is used by named images with a packages field
+	// to install only the requested subset of packages.
+	//
+	// The packageNames are the installed package names (e.g., "foo", "foo-contrib"),
+	// not map keys. The spec provides version information needed to construct
+	// filename patterns.
+	//
+	// If packageNames is empty, the original pkgState is returned unmodified
+	// (install all packages).
+	FilterPackages(pkgState llb.State, spec *dalec.Spec, packageNames []string, opts ...llb.ConstraintsOpt) llb.State
 }
 
 func BuildImageConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, platform *ocispecs.Platform, targetKey string) (*dalec.DockerImageSpec, error) {
-	img, err := resolveConfig(ctx, sOpt, spec, platform, targetKey)
+	bi, err := spec.GetSingleBase(targetKey)
+	if err != nil {
+		return nil, err
+	}
+
+	img, err := resolveConfig(ctx, sOpt, platform, bi)
 	if err != nil {
 		return nil, err
 	}
@@ -66,12 +83,40 @@ func BuildImageConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Sp
 	return img, nil
 }
 
-func resolveConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, platform *ocispecs.Platform, targetKey string) (*dalec.DockerImageSpec, error) {
-	bi, err := spec.GetSingleBase(targetKey)
+// BuildNamedImageConfig resolves the OCI image config for a named image definition.
+// It resolves the base image from the named image definition's merge chain,
+// then applies the named image's merged ImageConfig on top.
+func BuildNamedImageConfig(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, platform *ocispecs.Platform, targetKey, imageName string) (*dalec.DockerImageSpec, error) {
+	bases := spec.GetNamedImageBases(imageName, targetKey)
+
+	img, err := resolveBaseImageConfig(ctx, sOpt, platform, bases)
 	if err != nil {
 		return nil, err
 	}
 
+	if err := dalec.BuildNamedImageConfig(spec, targetKey, imageName, img); err != nil {
+		return nil, err
+	}
+
+	return img, nil
+}
+
+// resolveBaseImageConfig resolves the OCI config from the provided base images.
+// If no bases are provided, it returns a default base image config.
+// If more than one base is provided, an error is returned (only single base is supported).
+func resolveBaseImageConfig(ctx context.Context, sOpt dalec.SourceOpts, platform *ocispecs.Platform, bases []dalec.BaseImage) (*dalec.DockerImageSpec, error) {
+	if len(bases) > 1 {
+		return nil, errors.New("multiple image bases, expected only one")
+	}
+	if len(bases) == 0 {
+		return dalec.BaseImageConfig(platform), nil
+	}
+
+	bi := &bases[0]
+	return resolveConfig(ctx, sOpt, platform, bi)
+}
+
+func resolveConfig(ctx context.Context, sOpt dalec.SourceOpts, platform *ocispecs.Platform, bi *dalec.BaseImage) (*dalec.DockerImageSpec, error) {
 	if bi == nil {
 		return dalec.BaseImageConfig(platform), nil
 	}
@@ -100,6 +145,12 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 				return nil, nil, err
 			}
 
+			// Extract the image name from the remaining target path.
+			// After the mux strips the "container" prefix, the remaining
+			// target is the named image (e.g., "with-contrib" from
+			// "azlinux3/container/with-contrib").
+			imageName := client.BuildOpts().Opts["target"]
+
 			var opts []llb.ConstraintsOpt
 			opts = append(opts, dalec.ProgressGroup(spec.Name))
 			opts = append(opts, dalec.Platform(platform))
@@ -111,9 +162,54 @@ func HandleContainer(c DistroConfig) gwclient.BuildFunc {
 				pkgSt = c.BuildPkg(ctx, client, sOpt, spec, targetKey, opts...)
 			}
 
-			img, err := BuildImageConfig(ctx, sOpt, spec, platform, targetKey)
-			if err != nil {
-				return nil, nil, err
+			var img *dalec.DockerImageSpec
+
+			if imageName != "" {
+				// Named image: use the 3-level merge chain.
+				def := spec.GetImageDefinition(imageName, targetKey)
+				if def == nil {
+					return nil, nil, errors.Errorf("named image %q not defined in spec", imageName)
+				}
+				img, err = BuildNamedImageConfig(ctx, sOpt, spec, platform, targetKey, imageName)
+				if err != nil {
+					return nil, nil, err
+				}
+
+				// Override the spec's Image with the resolved named image
+				// config so that downstream code (BuildContainer,
+				// GetImagePost, GetSingleBase, etc.) uses the correct
+				// values from the named image definition. This is safe
+				// because the spec is freshly loaded per build invocation.
+				spec.Image = &def.ImageConfig
+				if t, ok := spec.Targets[targetKey]; ok {
+					t.Image = nil
+					spec.Targets[targetKey] = t
+				}
+
+				// Append image-specific tests so they run alongside
+				// root + target tests during c.RunTests.
+				if len(def.Tests) > 0 {
+					spec.Tests = append(spec.Tests, def.Tests...)
+				}
+
+				// Filter packages to only include those requested by the
+				// named image definition. When Packages is non-nil, only
+				// the listed packages are installed; when nil, all packages
+				// are installed (the full build output).
+				if def.Packages != nil {
+					pkgSt = c.FilterPackages(pkgSt, spec, def.Packages, opts...)
+				}
+			} else if len(spec.Images) > 0 {
+				// No image name specified but spec has named images.
+				// When images are defined, bare "container" target is not valid —
+				// a specific image name must be provided.
+				return nil, nil, errors.New("spec defines named images; specify an image name in the target path (e.g., container/<name>)")
+			} else {
+				// Traditional single-image spec.
+				img, err = BuildImageConfig(ctx, sOpt, spec, platform, targetKey)
+				if err != nil {
+					return nil, nil, err
+				}
 			}
 
 			ctr := c.BuildContainer(ctx, client, sOpt, spec, targetKey, pkgSt, opts...)

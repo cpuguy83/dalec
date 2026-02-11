@@ -2,6 +2,7 @@ package distro
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -90,4 +91,29 @@ func (c *Config) BuildContainer(ctx context.Context, client gwclient.Client, sOp
 		frontend.IgnoreCache(client, targets.IgnoreCacheKeyContainer),
 	).Root().
 		With(dalec.InstallPostSymlinks(spec.GetImagePost(targetKey), worker, opts...))
+}
+
+// FilterPackages filters the DEB package state to only include packages with
+// the given names. DEB filenames follow the pattern:
+//
+//	<name>_<version>-<distroID>u<revision>_<arch>.deb
+//
+// We use <name>_<version>-* as the include pattern so that e.g. "foo_1.0.0-*"
+// does not accidentally match "foo-contrib_1.0.0-*".
+//
+// If packageNames is empty, the original pkgState is returned unchanged.
+func (c *Config) FilterPackages(pkgState llb.State, spec *dalec.Spec, packageNames []string, opts ...llb.ConstraintsOpt) llb.State {
+	if len(packageNames) == 0 {
+		return pkgState
+	}
+
+	includes := make([]string, 0, len(packageNames))
+	for _, name := range packageNames {
+		includes = append(includes, fmt.Sprintf("%s_%s-*.deb", name, spec.Version))
+	}
+
+	return llb.Scratch().File(
+		llb.Copy(pkgState, "/", "/", dalec.WithIncludes(includes)),
+		dalec.WithConstraints(opts...),
+	)
 }

@@ -34,7 +34,8 @@ var errorsOutputFullPath = filepath.Join(testOutputPath, testErrorsOutputFile)
 // RunTests runs the tests defined in the spec against the given the input state.
 // The result of this is either the provided `finalState` or a state that errors when executed with the errors produced by the tests.
 // The input state should be a runnable container with all dependencies already installed.
-func RunTests(ctx context.Context, client gwclient.Client, spec *dalec.Spec, finalState llb.State, target string, platform *ocispecs.Platform) llb.StateOption {
+// Extra tests can be appended (e.g., image-specific tests for named images).
+func RunTests(ctx context.Context, client gwclient.Client, spec *dalec.Spec, finalState llb.State, target string, platform *ocispecs.Platform, extraTests ...*dalec.TestSpec) llb.StateOption {
 	return func(in llb.State) llb.State {
 		const (
 			buildArgPrefix = "build-arg:"
@@ -58,6 +59,8 @@ func RunTests(ctx context.Context, client gwclient.Client, spec *dalec.Spec, fin
 		if ok {
 			tests = append(tests, t.Tests...)
 		}
+
+		tests = append(tests, extraTests...)
 
 		if len(tests) == 0 {
 			return finalState
