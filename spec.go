@@ -79,6 +79,12 @@ type Spec struct {
 	// Artifacts is the list of artifacts to include in the package.
 	Artifacts Artifacts `yaml:"artifacts,omitempty" json:"artifacts,omitempty"`
 
+	// Packages is the map of supplemental packages that share this spec's build
+	// output but have their own artifact selection, metadata, and dependencies.
+	// The map key is the subpackage suffix; the full name defaults to
+	// "<spec.Name>-<key>" unless the SubPackage.Name field overrides it.
+	Packages map[string]SubPackage `yaml:"packages,omitempty" json:"packages,omitempty"`
+
 	// The list of distro targets to build the package for.
 	Targets map[string]Target `yaml:"targets,omitempty" json:"targets,omitempty"`
 

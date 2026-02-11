@@ -633,6 +633,137 @@ func (s *Spec) GetConflicts(targetKey string) PackageDependencyList {
 	return s.Conflicts
 }
 
+// SubPackageKeys returns the sorted keys of the spec-level Packages map.
+func (s *Spec) SubPackageKeys() []string {
+	return SortMapKeys(s.Packages)
+}
+
+// GetSubPackage returns the merged SubPackage for the given sub(package) key and target.
+// Target-level fields override spec-level fields when non-nil/non-empty.
+// Returns nil if sub does not exist in s.Packages.
+func (s *Spec) GetSubPackage(sub, targetKey string) *SubPackage {
+	base, ok := s.Packages[sub]
+	if !ok {
+		return nil
+	}
+
+	t, hasTarget := s.Targets[targetKey]
+	if !hasTarget {
+		return &base
+	}
+
+	override, hasOverride := t.Packages[sub]
+	if !hasOverride {
+		return &base
+	}
+
+	return mergeSubPackage(&base, &override)
+}
+
+// mergeSubPackage merges target-level overrides into a base SubPackage.
+// Non-nil/non-empty target fields take precedence.
+func mergeSubPackage(base, target *SubPackage) *SubPackage {
+	merged := *base
+
+	if target.Name != "" {
+		merged.Name = target.Name
+	}
+	if target.Description != "" {
+		merged.Description = target.Description
+	}
+	if target.Artifacts != nil {
+		merged.Artifacts = target.Artifacts
+	}
+	if target.Dependencies != nil {
+		merged.Dependencies = mergeSubPackageDependencies(base.Dependencies, target.Dependencies)
+	}
+	if target.Conflicts != nil {
+		merged.Conflicts = target.Conflicts
+	}
+	if target.Provides != nil {
+		merged.Provides = target.Provides
+	}
+	if target.Replaces != nil {
+		merged.Replaces = target.Replaces
+	}
+
+	return &merged
+}
+
+// mergeSubPackageDependencies merges two SubPackageDependencies, with target
+// taking precedence when non-empty.
+func mergeSubPackageDependencies(base, target *SubPackageDependencies) *SubPackageDependencies {
+	if base == nil {
+		return target
+	}
+	if target == nil {
+		return base
+	}
+
+	merged := &SubPackageDependencies{}
+
+	if len(target.Runtime) > 0 {
+		merged.Runtime = target.Runtime
+	} else {
+		merged.Runtime = base.Runtime
+	}
+
+	if len(target.Recommends) > 0 {
+		merged.Recommends = target.Recommends
+	} else {
+		merged.Recommends = base.Recommends
+	}
+
+	return merged
+}
+
+// GetSubPackageArtifacts returns the resolved artifacts for a supplemental
+// package, applying target overrides.
+func (s *Spec) GetSubPackageArtifacts(sub, targetKey string) *Artifacts {
+	sp := s.GetSubPackage(sub, targetKey)
+	if sp == nil {
+		return nil
+	}
+	return sp.Artifacts
+}
+
+// GetSubPackageDeps returns the resolved runtime dependencies for a
+// supplemental package, applying target overrides.
+func (s *Spec) GetSubPackageDeps(sub, targetKey string) *SubPackageDependencies {
+	sp := s.GetSubPackage(sub, targetKey)
+	if sp == nil {
+		return nil
+	}
+	return sp.Dependencies
+}
+
+// GetSubPackageProvides returns the resolved Provides for a supplemental package.
+func (s *Spec) GetSubPackageProvides(sub, targetKey string) PackageDependencyList {
+	sp := s.GetSubPackage(sub, targetKey)
+	if sp == nil {
+		return nil
+	}
+	return sp.Provides
+}
+
+// GetSubPackageConflicts returns the resolved Conflicts for a supplemental package.
+func (s *Spec) GetSubPackageConflicts(sub, targetKey string) PackageDependencyList {
+	sp := s.GetSubPackage(sub, targetKey)
+	if sp == nil {
+		return nil
+	}
+	return sp.Conflicts
+}
+
+// GetSubPackageReplaces returns the resolved Replaces for a supplemental package.
+func (s *Spec) GetSubPackageReplaces(sub, targetKey string) PackageDependencyList {
+	sp := s.GetSubPackage(sub, targetKey)
+	if sp == nil {
+		return nil
+	}
+	return sp.Replaces
+}
+
 func HasNpm(spec *Spec, targetKey string) bool {
 	for dep := range spec.GetPackageDeps(targetKey).GetBuild() {
 		switch dep {

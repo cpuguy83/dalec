@@ -3569,6 +3569,12 @@ func main() {
 		ctx := startTestSpan(baseCtx, t)
 		testArtifactCapabilities(ctx, t, testConfig)
 	})
+
+	t.Run("subpackages", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(baseCtx, t)
+		testSubPackages(ctx, t, testConfig)
+	})
 }
 
 func testNodeNpmGenerator(ctx context.Context, t *testing.T, targetCfg targetConfig, opts ...srOpt) {

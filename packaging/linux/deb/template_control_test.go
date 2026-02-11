@@ -305,3 +305,148 @@ func TestControlWrapper_ReplacesConflictsProvides(t *testing.T) {
 		assert.Assert(t, cmp.Contains(deps.String(), "${shlibs:Depends}"))
 	})
 }
+
+func TestSubPackageStanzas(t *testing.T) {
+	spec := &dalec.Spec{
+		Name:    "myapp",
+		Version: "1.0.0",
+		Packages: map[string]dalec.SubPackage{
+			"contrib": {
+				Description: "Contrib tools for myapp",
+				Dependencies: &dalec.SubPackageDependencies{
+					Runtime: map[string]dalec.PackageConstraints{
+						"libfoo": {},
+					},
+					Recommends: map[string]dalec.PackageConstraints{
+						"suggested-pkg": {},
+					},
+				},
+				Provides: map[string]dalec.PackageConstraints{
+					"myapp-extras": {},
+				},
+				Replaces: map[string]dalec.PackageConstraints{
+					"old-contrib": {},
+				},
+				Conflicts: map[string]dalec.PackageConstraints{
+					"other-contrib": {},
+				},
+			},
+		},
+	}
+	w := &controlWrapper{spec, "any-target"}
+
+	output := w.SubPackageStanzas().String()
+
+	assert.Assert(t, cmp.Contains(output, "Package: myapp-contrib"))
+	assert.Assert(t, cmp.Contains(output, "Architecture: linux-any"))
+	assert.Assert(t, cmp.Contains(output, "Section: -"))
+	assert.Assert(t, cmp.Contains(output, "libfoo"))
+	assert.Assert(t, cmp.Contains(output, "${misc:Depends}"))
+	assert.Assert(t, cmp.Contains(output, "${shlibs:Depends}"))
+	assert.Assert(t, cmp.Contains(output, "Recommends: suggested-pkg"))
+	assert.Assert(t, cmp.Contains(output, "Replaces: old-contrib"))
+	assert.Assert(t, cmp.Contains(output, "Conflicts: other-contrib"))
+	assert.Assert(t, cmp.Contains(output, "Provides: myapp-extras"))
+	assert.Assert(t, cmp.Contains(output, "Description: Contrib tools for myapp"))
+}
+
+func TestSubPackageStanzas_NameOverride(t *testing.T) {
+	spec := &dalec.Spec{
+		Name: "myapp",
+		Packages: map[string]dalec.SubPackage{
+			"contrib": {
+				Name:        "myapp-custom",
+				Description: "Custom named package",
+			},
+		},
+	}
+	w := &controlWrapper{spec, "target1"}
+
+	output := w.SubPackageStanzas().String()
+
+	assert.Assert(t, cmp.Contains(output, "Package: myapp-custom"))
+	assert.Assert(t, !strings.Contains(output, "Package: myapp-contrib"))
+}
+
+func TestSubPackageStanzas_DisableAutoRequires(t *testing.T) {
+	spec := &dalec.Spec{
+		Name: "myapp",
+		Packages: map[string]dalec.SubPackage{
+			"contrib": {
+				Description: "Contrib without shlibs",
+				Artifacts: &dalec.Artifacts{
+					DisableAutoRequires: true,
+				},
+			},
+		},
+	}
+	w := &controlWrapper{spec, "target1"}
+
+	output := w.SubPackageStanzas().String()
+
+	assert.Assert(t, cmp.Contains(output, "${misc:Depends}"))
+	assert.Assert(t, !strings.Contains(output, "${shlibs:Depends}"))
+}
+
+func TestSubPackageStanzas_Empty(t *testing.T) {
+	spec := &dalec.Spec{Name: "myapp"}
+	w := &controlWrapper{spec, "target1"}
+	assert.Equal(t, w.SubPackageStanzas().String(), "")
+}
+
+func TestSubPackageStanzas_MultiplePackages(t *testing.T) {
+	spec := &dalec.Spec{
+		Name: "myapp",
+		Packages: map[string]dalec.SubPackage{
+			"zebra": {Description: "Zebra package"},
+			"alpha": {Description: "Alpha package"},
+		},
+	}
+	w := &controlWrapper{spec, "target1"}
+
+	output := w.SubPackageStanzas().String()
+
+	alphaIdx := strings.Index(output, "Package: myapp-alpha")
+	zebraIdx := strings.Index(output, "Package: myapp-zebra")
+	assert.Assert(t, alphaIdx >= 0, "expected myapp-alpha in output")
+	assert.Assert(t, zebraIdx >= 0, "expected myapp-zebra in output")
+	assert.Assert(t, alphaIdx < zebraIdx, "expected myapp-alpha before myapp-zebra")
+}
+
+func TestSubPackageStanzas_TargetOverride(t *testing.T) {
+	spec := &dalec.Spec{
+		Name: "myapp",
+		Packages: map[string]dalec.SubPackage{
+			"contrib": {
+				Description: "Base description",
+				Dependencies: &dalec.SubPackageDependencies{
+					Runtime: map[string]dalec.PackageConstraints{
+						"base-dep": {},
+					},
+				},
+			},
+		},
+		Targets: map[string]dalec.Target{
+			"target1": {
+				Packages: map[string]dalec.SubPackage{
+					"contrib": {
+						Description: "Override description",
+						Dependencies: &dalec.SubPackageDependencies{
+							Runtime: map[string]dalec.PackageConstraints{
+								"override-dep": {},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	w := &controlWrapper{spec, "target1"}
+
+	output := w.SubPackageStanzas().String()
+
+	assert.Assert(t, cmp.Contains(output, "Description: Override description"))
+	assert.Assert(t, !strings.Contains(output, "Base description"))
+	assert.Assert(t, cmp.Contains(output, "override-dep"))
+	assert.Assert(t, !strings.Contains(output, "base-dep"))
+}

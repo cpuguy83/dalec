@@ -2091,6 +2091,16 @@
 					],
 					"description": "Packager is the name of the person,team,company that packaged the package."
 				},
+				"packages": {
+					"additionalProperties": {
+						"$ref": "#/$defs/SubPackage"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Packages is the map of supplemental packages that share this spec's build\noutput but have their own artifact selection, metadata, and dependencies.\nThe map key is the subpackage suffix; the full name defaults to\n\"\u003cspec.Name\u003e-\u003ckey\u003e\" unless the SubPackage.Name field overrides it."
+				},
 				"patches": {
 					"additionalProperties": {
 						"items": {
@@ -2186,6 +2196,72 @@
 				"null"
 			],
 			"description": "Spec is the specification for a package build."
+		},
+		"SubPackage": {
+			"properties": {
+				"artifacts": {
+					"$ref": "#/$defs/Artifacts",
+					"description": "Artifacts is the artifact selection for this supplemental package.\nEach supplemental package's artifacts are self-contained — no inheritance\nfrom the primary package."
+				},
+				"conflicts": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Conflicts is the list of packages that conflict with this supplemental package."
+				},
+				"dependencies": {
+					"$ref": "#/$defs/SubPackageDependencies",
+					"description": "Dependencies specifies the runtime dependencies for this supplemental\npackage. Only runtime dependencies are supported — build dependencies are\nshared from the parent spec."
+				},
+				"description": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Description is the package description for this supplemental package."
+				},
+				"name": {
+					"type": [
+						"string",
+						"null"
+					],
+					"description": "Name is the full package name override. If empty, the package name\ndefaults to \"\u003cparent\u003e-\u003ckey\u003e\" where \u003ckey\u003e is the map key under which\nthis SubPackage appears."
+				},
+				"provides": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Provides is the list of things that this supplemental package provides."
+				},
+				"replaces": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Replaces is the list of packages that are replaced by this supplemental package."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "SubPackage defines a supplemental package that shares the spec's build output but has its own artifact selection, metadata, and dependency declarations."
+		},
+		"SubPackageDependencies": {
+			"properties": {
+				"recommends": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Recommends is the list of packages recommended to install with this supplemental package."
+				},
+				"runtime": {
+					"$ref": "#/$defs/PackageDependencyList",
+					"description": "Runtime is the list of packages required to install/run this supplemental package."
+				}
+			},
+			"additionalProperties": {
+				"not": {}
+			},
+			"type": [
+				"object",
+				"null"
+			],
+			"description": "SubPackageDependencies holds the dependency declarations available to supplemental packages."
 		},
 		"SymlinkTarget": {
 			"required": [
@@ -2363,6 +2439,16 @@
 				"package_config": {
 					"$ref": "#/$defs/PackageConfig",
 					"description": "PackageConfig is the configuration to use for artifact targets, such as\nrpms, debs, or zip files containing Windows binaries"
+				},
+				"packages": {
+					"additionalProperties": {
+						"$ref": "#/$defs/SubPackage"
+					},
+					"type": [
+						"object",
+						"null"
+					],
+					"description": "Packages provides per-distro overrides for supplemental packages.\nKeys must match keys in [Spec.Packages]. Each entry can override\nartifacts, dependencies, conflicts, provides, and replaces for\nthat supplemental package on this target."
 				},
 				"provides": {
 					"$ref": "#/$defs/PackageDependencyList",

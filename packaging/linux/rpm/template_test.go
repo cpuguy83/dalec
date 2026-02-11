@@ -1135,3 +1135,185 @@ func TestTemplate_TargetSpecificOverrides(t *testing.T) {
 		assert.Assert(t, cmp.Contains(provides, "Provides: root-pkg-p == 5.0.0"))
 	})
 }
+
+func TestSubPackageStanzas(t *testing.T) {
+	t.Parallel()
+
+	spec := &dalec.Spec{
+		Name:    "myapp",
+		Version: "1.0.0",
+		Packages: map[string]dalec.SubPackage{
+			"contrib": {
+				Description: "Contrib tools for myapp",
+				Dependencies: &dalec.SubPackageDependencies{
+					Runtime: map[string]dalec.PackageConstraints{
+						"libfoo": {},
+					},
+				},
+				Provides: map[string]dalec.PackageConstraints{
+					"myapp-extras": {Version: []string{"= 1.0.0"}},
+				},
+				Replaces: map[string]dalec.PackageConstraints{
+					"old-contrib": {},
+				},
+				Conflicts: map[string]dalec.PackageConstraints{
+					"other-contrib": {},
+				},
+			},
+		},
+	}
+	w := &specWrapper{Spec: spec}
+
+	got := w.SubPackageStanzas().String()
+	assert.Assert(t, cmp.Contains(got, "%package -n myapp-contrib"))
+	assert.Assert(t, cmp.Contains(got, "Summary: Contrib tools for myapp"))
+	assert.Assert(t, cmp.Contains(got, "Requires: libfoo"))
+	assert.Assert(t, cmp.Contains(got, "Provides: myapp-extras == 1.0.0"))
+	assert.Assert(t, cmp.Contains(got, "Obsoletes: old-contrib"))
+	assert.Assert(t, cmp.Contains(got, "Conflicts: other-contrib"))
+	assert.Assert(t, cmp.Contains(got, "%description -n myapp-contrib"))
+	assert.Assert(t, cmp.Contains(got, "Contrib tools for myapp"))
+}
+
+func TestSubPackageStanzas_NameOverride(t *testing.T) {
+	t.Parallel()
+
+	spec := &dalec.Spec{
+		Name: "myapp",
+		Packages: map[string]dalec.SubPackage{
+			"contrib": {
+				Name:        "myapp-custom",
+				Description: "Custom named package",
+			},
+		},
+	}
+	w := &specWrapper{Spec: spec}
+
+	got := w.SubPackageStanzas().String()
+	assert.Assert(t, cmp.Contains(got, "%package -n myapp-custom"))
+	assert.Assert(t, !strings.Contains(got, "myapp-contrib"))
+}
+
+func TestSubPackageFiles(t *testing.T) {
+	t.Parallel()
+
+	spec := &dalec.Spec{
+		Name: "myapp",
+		Packages: map[string]dalec.SubPackage{
+			"tools": {
+				Description: "Tools",
+				Artifacts: &dalec.Artifacts{
+					Binaries: map[string]dalec.ArtifactConfig{
+						"mytool": {},
+					},
+					ConfigFiles: map[string]dalec.ArtifactConfig{
+						"mytool.conf": {SubPath: "myapp"},
+					},
+				},
+			},
+		},
+	}
+	w := &specWrapper{Spec: spec}
+
+	got := w.SubPackageFiles().String()
+	assert.Assert(t, cmp.Contains(got, "%files -n myapp-tools"))
+	assert.Assert(t, cmp.Contains(got, "%{_bindir}/mytool"))
+	assert.Assert(t, cmp.Contains(got, "%config(noreplace) %{_sysconfdir}/myapp/mytool.conf"))
+}
+
+func TestSubPackageInstall(t *testing.T) {
+	t.Parallel()
+
+	spec := &dalec.Spec{
+		Name: "myapp",
+		Packages: map[string]dalec.SubPackage{
+			"tools": {
+				Description: "Tools",
+				Artifacts: &dalec.Artifacts{
+					Binaries: map[string]dalec.ArtifactConfig{
+						"mytool": {},
+					},
+					ConfigFiles: map[string]dalec.ArtifactConfig{
+						"mytool.conf": {SubPath: "myapp"},
+					},
+				},
+			},
+		},
+	}
+	w := &specWrapper{Spec: spec}
+
+	got := w.Install().String()
+	assert.Assert(t, cmp.Contains(got, "mkdir -p %{buildroot}/%{_bindir}"))
+	assert.Assert(t, cmp.Contains(got, "cp -r mytool %{buildroot}/%{_bindir}/mytool"))
+}
+
+func TestSubPackageScriptlets(t *testing.T) {
+	t.Parallel()
+
+	spec := &dalec.Spec{
+		Name: "myapp",
+		Packages: map[string]dalec.SubPackage{
+			"daemon": {
+				Description: "Daemon package",
+				Artifacts: &dalec.Artifacts{
+					Systemd: &dalec.SystemdConfiguration{
+						Units: map[string]dalec.SystemdUnitConfig{
+							"myapp-daemon.service": {
+								Enable: true,
+								Start:  true,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	w := &specWrapper{Spec: spec}
+
+	got := w.SubPackageScriptlets().String()
+	assert.Assert(t, cmp.Contains(got, "%post -n myapp-daemon"))
+	assert.Assert(t, cmp.Contains(got, "systemctl enable --now myapp-daemon.service"))
+	assert.Assert(t, cmp.Contains(got, "%preun -n myapp-daemon"))
+	assert.Assert(t, cmp.Contains(got, "systemctl disable --now myapp-daemon.service"))
+	assert.Assert(t, cmp.Contains(got, "%postun -n myapp-daemon"))
+	assert.Assert(t, cmp.Contains(got, "%systemd_postun myapp-daemon.service"))
+}
+
+func TestSubPackageStanzas_Empty(t *testing.T) {
+	t.Parallel()
+
+	spec := &dalec.Spec{
+		Name:     "myapp",
+		Packages: map[string]dalec.SubPackage{},
+	}
+	w := &specWrapper{Spec: spec}
+
+	got := w.SubPackageStanzas().String()
+	assert.Equal(t, got, "")
+}
+
+func TestSubPackageFiles_WithDocs(t *testing.T) {
+	t.Parallel()
+
+	spec := &dalec.Spec{
+		Name: "myapp",
+		Packages: map[string]dalec.SubPackage{
+			"docs": {
+				Description: "Documentation",
+				Artifacts: &dalec.Artifacts{
+					Docs: map[string]dalec.ArtifactConfig{
+						"README.md": {},
+					},
+					Licenses: map[string]dalec.ArtifactConfig{
+						"LICENSE": {},
+					},
+				},
+			},
+		},
+	}
+	w := &specWrapper{Spec: spec}
+
+	got := w.SubPackageFiles().String()
+	assert.Assert(t, cmp.Contains(got, "%doc %{_docdir}/myapp-docs/README.md"))
+	assert.Assert(t, cmp.Contains(got, "%license %{_licensedir}/myapp-docs/LICENSE"))
+}

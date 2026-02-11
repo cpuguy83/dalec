@@ -277,6 +277,13 @@ func (s *Spec) SubstituteArgs(env map[string]string, opts ...SubstituteOpt) erro
 		}
 	}
 
+	for key, pkg := range s.Packages {
+		if err := pkg.processBuildArgs(lex, args, cfg.AllowArg); err != nil {
+			appendErr(errors.Wrapf(err, "package %s", key))
+		}
+		s.Packages[key] = pkg
+	}
+
 	return goerrors.Join(errs...)
 }
 
@@ -514,6 +521,11 @@ func (s *Spec) FillDefaults() {
 		s.Targets[k] = t
 	}
 
+	for key, pkg := range s.Packages {
+		pkg.fillDefaults()
+		s.Packages[key] = pkg
+	}
+
 	s.Image.fillDefaults()
 }
 
@@ -564,6 +576,12 @@ func (s Spec) Validate() error {
 	for k, t := range s.Targets {
 		if err := t.validate(); err != nil {
 			errs = append(errs, errors.Wrapf(err, "target %s", k))
+		}
+	}
+
+	for key, pkg := range s.Packages {
+		if err := pkg.validate(); err != nil {
+			errs = append(errs, errors.Wrapf(err, "package %s", key))
 		}
 	}
 

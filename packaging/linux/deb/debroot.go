@@ -185,6 +185,33 @@ func Debroot(ctx context.Context, sOpt dalec.SourceOpts, spec *dalec.Spec, worke
 		states = append(states, dalecDir.File(llb.Mkfile(filepath.Join(dir, spec.Name+".links"), 0o644, buf.Bytes()), opts...))
 	}
 
+	// Generate subpackage install scripts and links
+	for _, key := range spec.SubPackageKeys() {
+		sp := spec.GetSubPackage(key, target)
+		if sp == nil {
+			continue
+		}
+
+		resolvedName := sp.ResolvedName(spec.Name, key)
+		spStates := createSubPackageInstallScripts(worker, spec, sp, resolvedName, dir, target, opts...)
+		states = append(states, spStates...)
+
+		if sp.Artifacts != nil && len(sp.Artifacts.Links) > 0 {
+			buf := bytes.NewBuffer(nil)
+			for _, l := range sp.Artifacts.Links {
+				src := strings.TrimPrefix(l.Source, "/")
+				dst := strings.TrimPrefix(l.Dest, "/")
+				fmt.Fprintln(buf, src, dst)
+			}
+			states = append(states, dalecDir.File(llb.Mkfile(filepath.Join(dir, resolvedName+".links"), 0o644, buf.Bytes()), opts...))
+		}
+
+		spPostinst := generateSubPackagePostinst(spec, sp, resolvedName, target)
+		if len(spPostinst) > 0 {
+			states = append(states, dalecDir.File(llb.Mkfile(filepath.Join(dir, resolvedName+".postinst"), 0o700, spPostinst), opts...))
+		}
+	}
+
 	return dalec.MergeAtPath(in, states, "/", opts...)
 }
 
@@ -290,6 +317,88 @@ func fixupArtifactPerms(spec *dalec.Spec, target string, cfg *SourcePkgConfig) [
 			if cfg.Mode.Perm() != 0 {
 				p := filepath.Join(basePath, "/var/lib", name)
 				fmt.Fprintf(buf, "chmod %o %q\n", cfg.Mode.Perm(), p)
+			}
+		}
+	}
+
+	// Handle subpackage artifact permissions
+	for _, key := range spec.SubPackageKeys() {
+		sp := spec.GetSubPackage(key, target)
+		if sp == nil || sp.Artifacts == nil {
+			continue
+		}
+
+		resolvedName := sp.ResolvedName(spec.Name, key)
+		spBasePath := filepath.Join("debian", resolvedName)
+		spArtifacts := sp.Artifacts
+
+		checkAndWriteSubPkgPerms := func(artMap map[string]dalec.ArtifactConfig, dir string) {
+			if artMap == nil {
+				return
+			}
+			sorted := dalec.SortMapKeys(artMap)
+			for _, k := range sorted {
+				c := artMap[k]
+				rn := c.ResolveName(k)
+				p := filepath.Join(spBasePath, dir, rn)
+				if c.SubPath != "" {
+					p = filepath.Join(spBasePath, dir, c.SubPath, rn)
+				}
+				if c.Permissions.Perm() != 0 {
+					fmt.Fprintf(buf, "chmod %o %q\n", c.Permissions.Perm(), p)
+					continue
+				}
+				srcKey, subpath, _ := strings.Cut(k, "/")
+				src, ok := spec.Sources[srcKey]
+				if !ok || src.Inline == nil {
+					continue
+				}
+				if src.Inline.File != nil && src.Inline.File.Permissions.Perm() != 0 {
+					fmt.Fprintf(buf, "chmod %o %q\n", src.Inline.File.Permissions.Perm(), p)
+					continue
+				}
+				if src.Inline.Dir == nil {
+					continue
+				}
+				if subpath == "" {
+					if src.Inline.Dir.Permissions.Perm() != 0 {
+						fmt.Fprintf(buf, "chmod %o %q\n", src.Inline.Dir.Permissions.Perm(), p)
+					}
+					continue
+				}
+				if f, ok := src.Inline.Dir.Files[subpath]; ok && f.Permissions.Perm() != 0 {
+					fmt.Fprintf(buf, "chmod %o %q\n", f.Permissions.Perm(), p)
+				}
+			}
+		}
+
+		checkAndWriteSubPkgPerms(spArtifacts.Binaries, BinariesPath)
+		checkAndWriteSubPkgPerms(spArtifacts.ConfigFiles, ConfigFilesPath)
+		checkAndWriteSubPkgPerms(spArtifacts.Manpages, filepath.Join(ManpagesPath, resolvedName))
+		checkAndWriteSubPkgPerms(spArtifacts.Headers, HeadersPath)
+		checkAndWriteSubPkgPerms(spArtifacts.Licenses, filepath.Join(LicensesPath, resolvedName))
+		checkAndWriteSubPkgPerms(spArtifacts.Docs, filepath.Join(DocsPath, resolvedName))
+		checkAndWriteSubPkgPerms(spArtifacts.Libs, LibsPath)
+		checkAndWriteSubPkgPerms(spArtifacts.Libexec, LibexecPath)
+		checkAndWriteSubPkgPerms(spArtifacts.DataDirs, DataDirsPath)
+
+		if spArtifacts.Directories != nil {
+			sorted := dalec.SortMapKeys(spArtifacts.Directories.GetConfig())
+			for _, name := range sorted {
+				dcfg := spArtifacts.Directories.Config[name]
+				if dcfg.Mode.Perm() != 0 {
+					p := filepath.Join(spBasePath, "/etc", name)
+					fmt.Fprintf(buf, "chmod %o %q\n", dcfg.Mode.Perm(), p)
+				}
+			}
+
+			sorted = dalec.SortMapKeys(spArtifacts.Directories.GetState())
+			for _, name := range sorted {
+				dcfg := spArtifacts.Directories.State[name]
+				if dcfg.Mode.Perm() != 0 {
+					p := filepath.Join(spBasePath, "/var/lib", name)
+					fmt.Fprintf(buf, "chmod %o %q\n", dcfg.Mode.Perm(), p)
+				}
 			}
 		}
 	}
@@ -747,6 +856,295 @@ func setArtifactOwnershipPostInst(w *bytes.Buffer, spec *dalec.Spec, target stri
 
 func setArtifactCapabilitiesPostInst(w *bytes.Buffer, spec *dalec.Spec, target string) {
 	artifacts := spec.GetArtifacts(target)
+
+	apply := func(artifacts map[string]dalec.ArtifactConfig, root string) {
+		if artifacts == nil {
+			return
+		}
+		sorted := dalec.SortMapKeys(artifacts)
+		for _, key := range sorted {
+			cfg := artifacts[key]
+			capString := dalec.CapabilitiesString(cfg.LinuxCapabilities)
+			if capString == "" {
+				continue
+			}
+			resolved := cfg.ResolveName(key)
+			p := filepath.Join(root, cfg.SubPath, resolved)
+			fmt.Fprintf(w, "setcap '%s' \"$DESTDIR%s\"\n", capString, p)
+		}
+	}
+
+	apply(artifacts.Binaries, BinariesPath)
+	apply(artifacts.Libs, LibsPath)
+	apply(artifacts.Libexec, LibexecPath)
+}
+
+func createSubPackageInstallScripts(worker llb.State, spec *dalec.Spec, sp *dalec.SubPackage, resolvedName, dir, target string, opts ...llb.ConstraintsOpt) []llb.State {
+	if sp.Artifacts == nil {
+		return nil
+	}
+
+	artifacts := sp.Artifacts
+	states := make([]llb.State, 0)
+	base := llb.Scratch().File(llb.Mkdir(dir, 0o755, llb.WithParents(true)), opts...)
+
+	installBuf := bytes.NewBuffer(nil)
+	writeInstallHeader := sync.OnceFunc(func() {
+		fmt.Fprintln(installBuf, string(debianInstall))
+	})
+
+	writeInstall := func(src, dir, name string) {
+		writeInstallHeader()
+		name = strings.TrimSuffix(name, "*")
+		dest := filepath.Join("debian", resolvedName, dir, name)
+		fmt.Fprintln(installBuf, "do_install", filepath.Dir(dest), dest, src)
+	}
+
+	if len(artifacts.Binaries) > 0 {
+		sorted := dalec.SortMapKeys(artifacts.Binaries)
+		for _, key := range sorted {
+			cfg := artifacts.Binaries[key]
+			writeInstall(key, filepath.Join(BinariesPath, cfg.SubPath), cfg.ResolveName(key))
+		}
+	}
+
+	if len(artifacts.ConfigFiles) > 0 {
+		sorted := dalec.SortMapKeys(artifacts.ConfigFiles)
+		for _, p := range sorted {
+			cfg := artifacts.ConfigFiles[p]
+			writeInstall(p, filepath.Join(ConfigFilesPath, cfg.SubPath), cfg.ResolveName(p))
+		}
+	}
+
+	if len(artifacts.Manpages) > 0 {
+		buf := bytes.NewBuffer(nil)
+
+		sorted := dalec.SortMapKeys(artifacts.Manpages)
+		for _, key := range sorted {
+			cfg := artifacts.Manpages[key]
+			if cfg.Name != "" || (cfg.SubPath != "" && cfg.SubPath != filepath.Base(filepath.Dir(key))) {
+				resolved := cfg.ResolveName(key)
+				writeInstall(key, filepath.Join(ManpagesPath, resolvedName, cfg.SubPath), resolved)
+				continue
+			}
+			fmt.Fprintln(buf, key)
+		}
+		if buf.Len() > 0 {
+			states = append(states, base.File(llb.Mkfile(filepath.Join(dir, resolvedName+".manpages"), 0o640, buf.Bytes()), opts...))
+		}
+	}
+
+	if artifacts.Directories != nil {
+		buf := bytes.NewBuffer(nil)
+
+		sorted := dalec.SortMapKeys(artifacts.Directories.Config)
+		for _, name := range sorted {
+			fmt.Fprintln(buf, filepath.Join("/etc", name))
+		}
+
+		sorted = dalec.SortMapKeys(artifacts.Directories.State)
+		for _, name := range sorted {
+			fmt.Fprintln(buf, filepath.Join("/var/lib", name))
+		}
+
+		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, resolvedName+".dirs"), 0o640, buf.Bytes()), opts...))
+	}
+
+	if len(artifacts.Docs) > 0 || len(artifacts.Licenses) > 0 {
+		buf := bytes.NewBuffer(nil)
+
+		sorted := dalec.SortMapKeys(artifacts.Docs)
+		for _, key := range sorted {
+			cfg := artifacts.Docs[key]
+			resolved := cfg.ResolveName(key)
+			if resolved != key || cfg.SubPath != "" {
+				writeInstall(key, filepath.Join(DocsPath, resolvedName, cfg.SubPath), resolved)
+			} else {
+				fmt.Fprintln(buf, key)
+			}
+		}
+
+		sorted = dalec.SortMapKeys(artifacts.Licenses)
+		for _, key := range sorted {
+			cfg := artifacts.Licenses[key]
+			resolved := cfg.ResolveName(key)
+			if resolved != key || cfg.SubPath != "" {
+				writeInstall(key, filepath.Join(LicensesPath, resolvedName, cfg.SubPath), resolved)
+			} else {
+				fmt.Fprintln(buf, key)
+			}
+		}
+
+		if buf.Len() > 0 {
+			states = append(states, base.File(llb.Mkfile(filepath.Join(dir, resolvedName+".docs"), 0o640, buf.Bytes()), opts...))
+		}
+	}
+
+	if len(artifacts.Headers) > 0 {
+		sorted := dalec.SortMapKeys(artifacts.Headers)
+		for _, key := range sorted {
+			cfg := artifacts.Headers[key]
+			resolved := cfg.ResolveName(key)
+			writeInstall(key, filepath.Join(HeadersPath, cfg.SubPath), resolved)
+		}
+	}
+
+	if units := artifacts.Systemd.GetUnits(); len(units) > 0 {
+		sorted := dalec.SortMapKeys(units)
+		for _, key := range sorted {
+			cfg := units[key]
+			name, suffix := cfg.SplitName(key)
+			if name != resolvedName {
+				name = resolvedName + "." + name
+			}
+			name = name + "." + suffix
+
+			st := worker.Run(
+				llb.Dir(filepath.Join("/tmp/work", dir)),
+				dalec.ShArgs("ln -s ../"+key+" "+name),
+				dalec.WithConstraints(opts...),
+			).AddMount("/tmp/work", llb.Scratch())
+			states = append(states, st)
+		}
+	}
+
+	if dropins := artifacts.Systemd.GetDropins(); len(dropins) > 0 {
+		sorted := dalec.SortMapKeys(dropins)
+		for _, key := range sorted {
+			cfg := dropins[key]
+			cfgA := cfg.Artifact()
+			name := cfgA.ResolveName(key)
+			writeInstall(key, filepath.Join("/lib/systemd/system", cfg.Unit+".d"), name)
+		}
+	}
+
+	if len(artifacts.DataDirs) > 0 {
+		sorted := dalec.SortMapKeys(artifacts.DataDirs)
+		for _, key := range sorted {
+			cfg := artifacts.DataDirs[key]
+			resolved := cfg.ResolveName(key)
+			writeInstall(key, filepath.Join(DataDirsPath, cfg.SubPath), resolved)
+		}
+	}
+
+	if len(artifacts.Libexec) > 0 {
+		sorted := dalec.SortMapKeys(artifacts.Libexec)
+		for _, key := range sorted {
+			cfg := artifacts.Libexec[key]
+			resolved := cfg.ResolveName(key)
+			targetDir := filepath.Join(LibexecPath, cfg.SubPath)
+			writeInstall(key, targetDir, resolved)
+		}
+	}
+
+	if len(artifacts.Libs) > 0 {
+		sorted := dalec.SortMapKeys(artifacts.Libs)
+		for _, key := range sorted {
+			cfg := artifacts.Libs[key]
+			resolved := cfg.ResolveName(key)
+			writeInstall(key, filepath.Join(LibsPath, cfg.SubPath), resolved)
+		}
+	}
+
+	if installBuf.Len() > 0 {
+		states = append(states, base.File(llb.Mkfile(filepath.Join(dir, resolvedName+".install"), 0o700, installBuf.Bytes()), opts...))
+	}
+
+	return states
+}
+
+func generateSubPackagePostinst(spec *dalec.Spec, sp *dalec.SubPackage, resolvedName, target string) []byte {
+	if sp.Artifacts == nil {
+		return nil
+	}
+
+	buf := bytes.NewBuffer(nil)
+	artifacts := sp.Artifacts
+
+	writeUsersPostInst(buf, artifacts.Users)
+	writeGroupsPostInst(buf, artifacts.Groups)
+	setSubPackageArtifactOwnershipPostInst(buf, sp, resolvedName)
+	setSubPackageArtifactCapabilitiesPostInst(buf, sp)
+
+	if buf.Len() == 0 {
+		return nil
+	}
+
+	dt := []byte("#!/usr/bin/env sh\nset -e\n\n#DEBHELPER#\n\n")
+	dt = append(dt, buf.Bytes()...)
+	return dt
+}
+
+func setSubPackageArtifactOwnershipPostInst(w *bytes.Buffer, sp *dalec.SubPackage, resolvedName string) {
+	if sp.Artifacts == nil {
+		return
+	}
+	artifacts := sp.Artifacts
+
+	apply := func(artifacts map[string]dalec.ArtifactConfig, root string) {
+		if artifacts == nil {
+			return
+		}
+		sorted := dalec.SortMapKeys(artifacts)
+		for _, key := range sorted {
+			cfg := artifacts[key]
+			resolved := cfg.ResolveName(key)
+			p := filepath.Join(root, cfg.SubPath, resolved)
+			if cfg.User != "" {
+				fmt.Fprintf(w, "chown -R %s \"$DESTDIR%s\"\n", cfg.User, p)
+			}
+			if cfg.Group != "" {
+				fmt.Fprintf(w, "chgrp -R %s \"$DESTDIR%s\"\n", cfg.Group, p)
+			}
+		}
+	}
+
+	apply(artifacts.Binaries, BinariesPath)
+	apply(artifacts.ConfigFiles, ConfigFilesPath)
+	apply(artifacts.Manpages, filepath.Join(ManpagesPath, resolvedName))
+	apply(artifacts.Headers, HeadersPath)
+	apply(artifacts.Licenses, filepath.Join(LicensesPath, resolvedName))
+	apply(artifacts.Docs, filepath.Join(DocsPath, resolvedName))
+	apply(artifacts.Libs, LibsPath)
+	apply(artifacts.Libexec, LibexecPath)
+	apply(artifacts.DataDirs, DataDirsPath)
+
+	applyDir := func(dirs map[string]dalec.ArtifactDirConfig, root string) {
+		sorted := dalec.SortMapKeys(dirs)
+		for _, key := range sorted {
+			cfg := dirs[key]
+			p := filepath.Join(root, key)
+			if cfg.User != "" {
+				fmt.Fprintf(w, "chown -R %s \"$DESTDIR%s\"\n", cfg.User, p)
+			}
+			if cfg.Group != "" {
+				fmt.Fprintf(w, "chgrp -R %s \"$DESTDIR%s\"\n", cfg.Group, p)
+			}
+		}
+	}
+	if artifacts.Directories != nil {
+		applyDir(artifacts.Directories.Config, ConfigFilesPath)
+		applyDir(artifacts.Directories.State, "/var/lib")
+	}
+
+	if len(artifacts.Links) > 0 {
+		fmt.Fprintf(w, "# Set ownership for artifact symlinks\n")
+		for _, link := range artifacts.Links {
+			if link.User != "" {
+				fmt.Fprintf(w, "chown -h %s \"$DESTDIR%s\"\n", link.User, link.Dest)
+			}
+			if link.Group != "" {
+				fmt.Fprintf(w, "chgrp -h %s \"$DESTDIR%s\"\n", link.Group, link.Dest)
+			}
+		}
+	}
+}
+
+func setSubPackageArtifactCapabilitiesPostInst(w *bytes.Buffer, sp *dalec.SubPackage) {
+	if sp.Artifacts == nil {
+		return
+	}
+	artifacts := sp.Artifacts
 
 	apply := func(artifacts map[string]dalec.ArtifactConfig, root string) {
 		if artifacts == nil {
