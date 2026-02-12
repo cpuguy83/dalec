@@ -56,6 +56,12 @@ func testNamedImages(ctx context.Context, t *testing.T, testConfig testLinuxConf
 		ctx := startTestSpan(ctx, t)
 		testNonexistentImageNameFails(ctx, t, testConfig)
 	})
+
+	t.Run("named image sub-package file isolation", func(t *testing.T) {
+		t.Parallel()
+		ctx := startTestSpan(ctx, t)
+		testNamedImageFileIsolation(ctx, t, testConfig)
+	})
 }
 
 // newNamedImageSpec creates a spec with a primary package and a "contrib"
@@ -330,5 +336,142 @@ func testNonexistentImageNameFails(ctx context.Context, t *testing.T, cfg testLi
 		assert.Assert(t, err != nil, "expected error when requesting nonexistent named image")
 		assert.Assert(t, strings.Contains(err.Error(), "does-not-exist"),
 			"error should mention the image name, got: %v", err)
+	})
+}
+
+// testNamedImageFileIsolation verifies that a named image installing only a
+// specific sub-package contains ONLY that sub-package's files — not files from
+// the main package or other sub-packages.
+func testNamedImageFileIsolation(ctx context.Context, t *testing.T, cfg testLinuxConfig) {
+	spec := &dalec.Spec{
+		Name:        "test-isolation",
+		Version:     "0.0.1",
+		Revision:    "1",
+		License:     "MIT",
+		Website:     "https://github.com/project-dalec/dalec",
+		Vendor:      "Dalec",
+		Packager:    "Dalec",
+		Description: "Test file isolation across packages",
+		Sources: map[string]dalec.Source{
+			"primary-bin": {
+				Inline: &dalec.SourceInline{
+					File: &dalec.SourceInlineFile{
+						Contents:    "#!/usr/bin/env bash\necho primary\n",
+						Permissions: 0o755,
+					},
+				},
+			},
+			"contrib-bin": {
+				Inline: &dalec.SourceInline{
+					File: &dalec.SourceInlineFile{
+						Contents:    "#!/usr/bin/env bash\necho contrib\n",
+						Permissions: 0o755,
+					},
+				},
+			},
+			"extras-bin": {
+				Inline: &dalec.SourceInline{
+					File: &dalec.SourceInlineFile{
+						Contents:    "#!/usr/bin/env bash\necho extras\n",
+						Permissions: 0o755,
+					},
+				},
+			},
+			"primary.conf": {
+				Inline: &dalec.SourceInline{
+					File: &dalec.SourceInlineFile{
+						Contents: "primary-config=true\n",
+					},
+				},
+			},
+			"contrib.conf": {
+				Inline: &dalec.SourceInline{
+					File: &dalec.SourceInlineFile{
+						Contents: "contrib-config=true\n",
+					},
+				},
+			},
+		},
+		Dependencies: &dalec.PackageDependencies{
+			Runtime: map[string]dalec.PackageConstraints{
+				"coreutils": {},
+			},
+		},
+		Build: dalec.ArtifactBuild{
+			Steps: []dalec.BuildStep{
+				{Command: "/bin/true"},
+			},
+		},
+		Artifacts: dalec.Artifacts{
+			Binaries: map[string]dalec.ArtifactConfig{
+				"primary-bin": {},
+			},
+			ConfigFiles: map[string]dalec.ArtifactConfig{
+				"primary.conf": {},
+			},
+		},
+		Packages: map[string]dalec.SubPackage{
+			"contrib": {
+				Description: "Contrib subpackage",
+				Artifacts: &dalec.Artifacts{
+					Binaries: map[string]dalec.ArtifactConfig{
+						"contrib-bin": {},
+					},
+					ConfigFiles: map[string]dalec.ArtifactConfig{
+						"contrib.conf": {},
+					},
+				},
+			},
+			"extras": {
+				Description: "Extras subpackage",
+				Artifacts: &dalec.Artifacts{
+					Binaries: map[string]dalec.ArtifactConfig{
+						"extras-bin": {},
+					},
+				},
+			},
+		},
+		Images: map[string]dalec.ImageDefinition{
+			"contrib-only": {
+				// Install ONLY the contrib sub-package.
+				Packages: []string{"test-isolation-contrib"},
+				Tests: []*dalec.TestSpec{
+					{
+						Name: "only contrib files present",
+						Steps: []dalec.TestStep{
+							// contrib-bin MUST exist
+							{
+								Command: "/usr/bin/contrib-bin",
+								Stdout:  dalec.CheckOutput{Contains: []string{"contrib"}},
+							},
+							// contrib.conf MUST exist
+							{
+								Command: "/bin/bash -c 'test -f /etc/contrib.conf'",
+							},
+							// primary-bin must NOT exist
+							{
+								Command: "/bin/bash -c 'test ! -f /usr/bin/primary-bin'",
+							},
+							// primary.conf must NOT exist
+							{
+								Command: "/bin/bash -c 'test ! -f /etc/primary.conf'",
+							},
+							// extras-bin must NOT exist
+							{
+								Command: "/bin/bash -c 'test ! -f /usr/bin/extras-bin'",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	testEnv.RunTest(ctx, t, func(ctx context.Context, gwc gwclient.Client) {
+		sr := newSolveRequest(
+			withSpec(ctx, t, spec),
+			withBuildTarget(cfg.Target.Container+"/contrib-only"),
+		)
+		solveT(ctx, t, gwc, sr)
 	})
 }

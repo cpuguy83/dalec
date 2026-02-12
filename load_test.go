@@ -9,6 +9,7 @@ import (
 	"os"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/goccy/go-yaml"
@@ -1288,6 +1289,140 @@ build:
 		_, err := LoadSpec(dt)
 		assert.NilError(t, err)
 	})
+
+	t.Run("subpackage build args", func(t *testing.T) {
+		dt := []byte(`
+args:
+  MY_VER:
+
+packages:
+  contrib:
+    description: contrib tools
+    dependencies:
+      runtime:
+        rt-dep:
+          version:
+            - ">= ${MY_VER}"
+      recommends:
+        rec-dep:
+          version:
+            - "= ${MY_VER}"
+    provides:
+      compat-pkg:
+        version:
+          - "= ${MY_VER}"
+    replaces:
+      old-pkg:
+        version:
+          - ">= ${MY_VER}"
+    conflicts:
+      bad-pkg:
+        version:
+          - "<= ${MY_VER}"
+
+targets:
+  testdistro:
+    packages:
+      target-contrib:
+        description: target contrib
+        dependencies:
+          runtime:
+            t-rt-dep:
+              version:
+                - ">= ${MY_VER}"
+          recommends:
+            t-rec-dep:
+              version:
+                - "= ${MY_VER}"
+        provides:
+          t-compat:
+            version:
+              - "= ${MY_VER}"
+        replaces:
+          t-old:
+            version:
+              - ">= ${MY_VER}"
+        conflicts:
+          t-bad:
+            version:
+              - "<= ${MY_VER}"
+`)
+
+		spec, err := LoadSpec(dt)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = spec.SubstituteArgs(map[string]string{
+			"MY_VER": "2.0.0",
+		})
+		assert.NilError(t, err)
+
+		// Spec-level subpackage
+		sp := spec.Packages["contrib"]
+		assert.Check(t, cmp.Equal(sp.Dependencies.Runtime["rt-dep"].Version[0], ">= 2.0.0"))
+		assert.Check(t, cmp.Equal(sp.Dependencies.Recommends["rec-dep"].Version[0], "= 2.0.0"))
+		assert.Check(t, cmp.Equal(sp.Provides["compat-pkg"].Version[0], "= 2.0.0"))
+		assert.Check(t, cmp.Equal(sp.Replaces["old-pkg"].Version[0], ">= 2.0.0"))
+		assert.Check(t, cmp.Equal(sp.Conflicts["bad-pkg"].Version[0], "<= 2.0.0"))
+
+		// Target-level subpackage
+		tsp := spec.Targets["testdistro"].Packages["target-contrib"]
+		assert.Check(t, cmp.Equal(tsp.Dependencies.Runtime["t-rt-dep"].Version[0], ">= 2.0.0"))
+		assert.Check(t, cmp.Equal(tsp.Dependencies.Recommends["t-rec-dep"].Version[0], "= 2.0.0"))
+		assert.Check(t, cmp.Equal(tsp.Provides["t-compat"].Version[0], "= 2.0.0"))
+		assert.Check(t, cmp.Equal(tsp.Replaces["t-old"].Version[0], ">= 2.0.0"))
+		assert.Check(t, cmp.Equal(tsp.Conflicts["t-bad"].Version[0], "<= 2.0.0"))
+	})
+
+	t.Run("image definition build args", func(t *testing.T) {
+		dt := []byte(`
+args:
+  IMG_LABEL:
+
+images:
+  myimg:
+    labels:
+      version: "${IMG_LABEL}"
+    tests:
+      - name: img test
+        steps:
+          - command: echo test
+            stdin: "${IMG_LABEL}"
+
+targets:
+  testdistro:
+    images:
+      target-img:
+        labels:
+          target-version: "${IMG_LABEL}"
+        tests:
+          - name: target img test
+            steps:
+              - command: echo test
+                stdin: "${IMG_LABEL}"
+`)
+
+		spec, err := LoadSpec(dt)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = spec.SubstituteArgs(map[string]string{
+			"IMG_LABEL": "v1.0",
+		})
+		assert.NilError(t, err)
+
+		// Spec-level image definition
+		img := spec.Images["myimg"]
+		assert.Check(t, cmp.Equal(img.Labels["version"], "v1.0"))
+		assert.Check(t, cmp.Equal(img.Tests[0].Steps[0].Stdin, "v1.0"))
+
+		// Target-level image definition
+		timg := spec.Targets["testdistro"].Images["target-img"]
+		assert.Check(t, cmp.Equal(timg.Labels["target-version"], "v1.0"))
+		assert.Check(t, cmp.Equal(timg.Tests[0].Steps[0].Stdin, "v1.0"))
+	})
 }
 
 func Test_validatePatch(t *testing.T) {
@@ -2216,5 +2351,131 @@ func FuzzLoad(f *testing.F) {
 		if err != nil {
 			t.Skip() // Skip if the data is not valid YAML
 		}
+	})
+}
+
+func TestSpecValidatePropagatesPackageErrors(t *testing.T) {
+	t.Parallel()
+
+	// SubPackage with capabilities on a non-executable artifact type triggers validate() error.
+	spec := &Spec{
+		Name:     "test-pkg",
+		Version:  "1.0.0",
+		Packager: "test",
+		Packages: map[string]SubPackage{
+			"contrib": {
+				Artifacts: &Artifacts{
+					ConfigFiles: map[string]ArtifactConfig{
+						"my.conf": {LinuxCapabilities: []ArtifactCapability{
+							{Name: "cap_net_bind_service", Effective: true},
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	err := spec.Validate()
+	assert.Assert(t, err != nil, "expected validation error for capabilities on config files")
+
+	errStr := err.Error()
+	// Error should be wrapped with "package contrib"
+	assert.Assert(t, strings.Contains(errStr, "package contrib"), "expected error to contain 'package contrib', got: %s", errStr)
+	assert.Assert(t, strings.Contains(errStr, "capabilities"), "expected error to mention capabilities, got: %s", errStr)
+}
+
+func TestSpecValidatePropagatesImageErrors(t *testing.T) {
+	t.Parallel()
+
+	// ImageDefinition with both Base and Bases set triggers validate() error.
+	spec := &Spec{
+		Name:     "test-pkg",
+		Version:  "1.0.0",
+		Packager: "test",
+		Images: map[string]ImageDefinition{
+			"myimg": {
+				ImageConfig: ImageConfig{
+					Base: "some-image:latest",
+					Bases: []BaseImage{
+						{Rootfs: Source{DockerImage: &SourceDockerImage{Ref: "base:1"}}},
+					},
+				},
+			},
+		},
+	}
+
+	err := spec.Validate()
+	assert.Assert(t, err != nil, "expected validation error for image with both base and bases")
+
+	errStr := err.Error()
+	// Error should be wrapped with "image myimg"
+	assert.Assert(t, strings.Contains(errStr, "image myimg"), "expected error to contain 'image myimg', got: %s", errStr)
+	assert.Assert(t, strings.Contains(errStr, "cannot specify both"), "expected error to mention base/bases conflict, got: %s", errStr)
+}
+
+func TestTargetValidatePropagatesPackageAndImageErrors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("target_package_error", func(t *testing.T) {
+		t.Parallel()
+
+		spec := &Spec{
+			Name:     "test-pkg",
+			Version:  "1.0.0",
+			Packager: "test",
+			Targets: map[string]Target{
+				"azlinux3": {
+					Packages: map[string]SubPackage{
+						"extra": {
+							Artifacts: &Artifacts{
+								Docs: map[string]ArtifactConfig{
+									"README": {LinuxCapabilities: []ArtifactCapability{
+										{Name: "cap_sys_admin", Effective: true},
+									}},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		err := spec.Validate()
+		assert.Assert(t, err != nil)
+
+		errStr := err.Error()
+		assert.Assert(t, strings.Contains(errStr, "target azlinux3"), "expected error to contain 'target azlinux3', got: %s", errStr)
+		assert.Assert(t, strings.Contains(errStr, "package extra"), "expected error to contain 'package extra', got: %s", errStr)
+	})
+
+	t.Run("target_image_error", func(t *testing.T) {
+		t.Parallel()
+
+		spec := &Spec{
+			Name:     "test-pkg",
+			Version:  "1.0.0",
+			Packager: "test",
+			Targets: map[string]Target{
+				"debian12": {
+					Images: map[string]ImageDefinition{
+						"target-img": {
+							ImageConfig: ImageConfig{
+								Base: "old:1",
+								Bases: []BaseImage{
+									{Rootfs: Source{DockerImage: &SourceDockerImage{Ref: "new:2"}}},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		err := spec.Validate()
+		assert.Assert(t, err != nil)
+
+		errStr := err.Error()
+		assert.Assert(t, strings.Contains(errStr, "target debian12"), "expected error to contain 'target debian12', got: %s", errStr)
+		assert.Assert(t, strings.Contains(errStr, "image target-img"), "expected error to contain 'image target-img', got: %s", errStr)
 	})
 }

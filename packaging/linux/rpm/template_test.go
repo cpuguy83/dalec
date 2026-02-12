@@ -1317,3 +1317,231 @@ func TestSubPackageFiles_WithDocs(t *testing.T) {
 	assert.Assert(t, cmp.Contains(got, "%doc %{_docdir}/myapp-docs/README.md"))
 	assert.Assert(t, cmp.Contains(got, "%license %{_licensedir}/myapp-docs/LICENSE"))
 }
+
+func TestSubPackageScriptlets_UserGroupCreation(t *testing.T) {
+	t.Parallel()
+
+	spec := &dalec.Spec{
+		Name: "myapp",
+		Packages: map[string]dalec.SubPackage{
+			"daemon": {
+				Description: "Daemon package",
+				Artifacts: &dalec.Artifacts{
+					Binaries: map[string]dalec.ArtifactConfig{
+						"myapp-daemon": {},
+					},
+					Users: []dalec.AddUserConfig{
+						{Name: "myappuser"},
+					},
+					Groups: []dalec.AddGroupConfig{
+						{Name: "myappgroup"},
+					},
+				},
+			},
+		},
+	}
+	w := &specWrapper{Spec: spec}
+
+	got := w.SubPackageScriptlets().String()
+	assert.Assert(t, cmp.Contains(got, "%post -n myapp-daemon"))
+	assert.Assert(t, cmp.Contains(got, "getent passwd myappuser >/dev/null || adduser myappuser"))
+	assert.Assert(t, cmp.Contains(got, "getent group myappgroup >/dev/null || groupadd --system myappgroup"))
+}
+
+func TestSubPackageScriptlets_ArtifactOwnership(t *testing.T) {
+	t.Parallel()
+
+	spec := &dalec.Spec{
+		Name: "myapp",
+		Packages: map[string]dalec.SubPackage{
+			"owned": {
+				Description: "Owned artifacts",
+				Artifacts: &dalec.Artifacts{
+					Binaries: map[string]dalec.ArtifactConfig{
+						"mybin": {User: "svcuser", Group: "svcgroup"},
+					},
+					Libs: map[string]dalec.ArtifactConfig{
+						"libfoo.so": {User: "svcuser", Group: "svcgroup"},
+					},
+					ConfigFiles: map[string]dalec.ArtifactConfig{
+						"myapp.conf": {SubPath: "myapp", User: "svcuser", Group: "svcgroup"},
+					},
+					DataDirs: map[string]dalec.ArtifactConfig{
+						"myapp-data": {User: "svcuser", Group: "svcgroup"},
+					},
+					Directories: &dalec.CreateArtifactDirectories{
+						Config: map[string]dalec.ArtifactDirConfig{
+							"myapp": {User: "svcuser", Group: "svcgroup"},
+						},
+						State: map[string]dalec.ArtifactDirConfig{
+							"myapp": {User: "svcuser", Group: "svcgroup"},
+						},
+					},
+					Links: []dalec.ArtifactSymlinkConfig{
+						{Source: "/usr/bin/mybin", Dest: "/usr/local/bin/mybin", User: "svcuser", Group: "svcgroup"},
+					},
+					Users: []dalec.AddUserConfig{
+						{Name: "svcuser"},
+					},
+					Groups: []dalec.AddGroupConfig{
+						{Name: "svcgroup"},
+					},
+				},
+			},
+		},
+	}
+	w := &specWrapper{Spec: spec}
+
+	got := w.SubPackageScriptlets().String()
+	assert.Assert(t, cmp.Contains(got, "%post -n myapp-owned"))
+
+	// Binary ownership
+	assert.Assert(t, cmp.Contains(got, "chown -R svcuser /%{_bindir}/mybin"))
+	assert.Assert(t, cmp.Contains(got, "chgrp -R svcgroup /%{_bindir}/mybin"))
+
+	// Lib ownership
+	assert.Assert(t, cmp.Contains(got, "chown -R svcuser /%{_libdir}/libfoo.so"))
+	assert.Assert(t, cmp.Contains(got, "chgrp -R svcgroup /%{_libdir}/libfoo.so"))
+
+	// Config file ownership
+	assert.Assert(t, cmp.Contains(got, "chown -R svcuser /%{_sysconfdir}/myapp/myapp.conf"))
+	assert.Assert(t, cmp.Contains(got, "chgrp -R svcgroup /%{_sysconfdir}/myapp/myapp.conf"))
+
+	// Data dir ownership
+	assert.Assert(t, cmp.Contains(got, "chown -R svcuser /%{_datadir}/myapp-data"))
+	assert.Assert(t, cmp.Contains(got, "chgrp -R svcgroup /%{_datadir}/myapp-data"))
+
+	// Directory ownership (config)
+	assert.Assert(t, cmp.Contains(got, "chown -R svcuser /%{_sysconfdir}/myapp"))
+	assert.Assert(t, cmp.Contains(got, "chgrp -R svcgroup /%{_sysconfdir}/myapp"))
+
+	// Directory ownership (state)
+	assert.Assert(t, cmp.Contains(got, "chown -R svcuser /%{_sharedstatedir}/myapp"))
+	assert.Assert(t, cmp.Contains(got, "chgrp -R svcgroup /%{_sharedstatedir}/myapp"))
+
+	// Symlink ownership
+	assert.Assert(t, cmp.Contains(got, "chown -h svcuser /usr/local/bin/mybin"))
+	assert.Assert(t, cmp.Contains(got, "chgrp -h svcgroup /usr/local/bin/mybin"))
+}
+
+func TestSubPackageScriptlets_Capabilities(t *testing.T) {
+	t.Parallel()
+
+	spec := &dalec.Spec{
+		Name: "myapp",
+		Packages: map[string]dalec.SubPackage{
+			"caps": {
+				Description: "Caps package",
+				Artifacts: &dalec.Artifacts{
+					Binaries: map[string]dalec.ArtifactConfig{
+						"mybin": {
+							User:  "svcuser",
+							Group: "svcgroup",
+							LinuxCapabilities: []dalec.ArtifactCapability{
+								{Name: "cap_net_raw", Effective: true, Permitted: true},
+							},
+						},
+					},
+					Libexec: map[string]dalec.ArtifactConfig{
+						"helper": {
+							User:  "svcuser",
+							Group: "svcgroup",
+							LinuxCapabilities: []dalec.ArtifactCapability{
+								{Name: "cap_net_bind_service", Effective: true, Permitted: true},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	w := &specWrapper{Spec: spec}
+
+	got := w.SubPackageScriptlets().String()
+	assert.Assert(t, cmp.Contains(got, "%post -n myapp-caps"))
+
+	// setcap for binary (has user+group, so setcap goes in %post, not %caps in %files)
+	assert.Assert(t, cmp.Contains(got, "setcap 'cap_net_raw=ep' /%{_bindir}/mybin"))
+
+	// setcap for libexec
+	assert.Assert(t, cmp.Contains(got, "setcap 'cap_net_bind_service=ep' /%{_libexecdir}/helper"))
+}
+
+func TestSubPackageFiles_CapsDirective(t *testing.T) {
+	t.Parallel()
+
+	// When capabilities are set but there is NO user/group, the %caps() macro
+	// should appear in %files -n rather than setcap in %post -n.
+	spec := &dalec.Spec{
+		Name: "myapp",
+		Packages: map[string]dalec.SubPackage{
+			"caps": {
+				Description: "Caps via files directive",
+				Artifacts: &dalec.Artifacts{
+					Binaries: map[string]dalec.ArtifactConfig{
+						"mybin": {
+							LinuxCapabilities: []dalec.ArtifactCapability{
+								{Name: "cap_net_raw", Effective: true, Permitted: true},
+							},
+						},
+					},
+					Libs: map[string]dalec.ArtifactConfig{
+						"libfoo.so": {
+							LinuxCapabilities: []dalec.ArtifactCapability{
+								{Name: "cap_net_bind_service", Effective: true, Permitted: true},
+							},
+						},
+					},
+					Libexec: map[string]dalec.ArtifactConfig{
+						"helper": {
+							LinuxCapabilities: []dalec.ArtifactCapability{
+								{Name: "cap_sys_admin", Effective: true, Permitted: true},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	w := &specWrapper{Spec: spec}
+
+	files := w.SubPackageFiles().String()
+	assert.Assert(t, cmp.Contains(files, "%caps(cap_net_raw=ep) %{_bindir}/mybin"))
+	assert.Assert(t, cmp.Contains(files, "%caps(cap_net_bind_service=ep) %{_libdir}/libfoo.so"))
+	assert.Assert(t, cmp.Contains(files, "%caps(cap_sys_admin=ep) %{_libexecdir}/helper"))
+
+	// No %post scriptlet should be generated since there's no user/group
+	scriptlets := w.SubPackageScriptlets().String()
+	assert.Assert(t, !strings.Contains(scriptlets, "%post -n myapp-caps"),
+		"should not generate %post when no user/group is set, got: %s", scriptlets)
+}
+
+func TestSubPackageFiles_AttrDirective(t *testing.T) {
+	t.Parallel()
+
+	spec := &dalec.Spec{
+		Name: "myapp",
+		Packages: map[string]dalec.SubPackage{
+			"linked": {
+				Description: "Package with owned symlinks",
+				Artifacts: &dalec.Artifacts{
+					Binaries: map[string]dalec.ArtifactConfig{
+						"mybin": {},
+					},
+					Links: []dalec.ArtifactSymlinkConfig{
+						{Source: "/usr/bin/mybin", Dest: "/usr/local/bin/mybin", User: "svcuser", Group: "svcgroup"},
+						{Source: "/usr/bin/mybin", Dest: "/opt/mybin"},
+					},
+				},
+			},
+		},
+	}
+	w := &specWrapper{Spec: spec}
+
+	got := w.SubPackageFiles().String()
+	assert.Assert(t, cmp.Contains(got, "%attr(-, svcuser, svcgroup) /usr/local/bin/mybin"))
+	// Link without user/group should appear without %attr
+	assert.Assert(t, cmp.Contains(got, "/opt/mybin"))
+	assert.Assert(t, !strings.Contains(got, "%attr(-, , ) /opt/mybin"),
+		"should not have %attr for link without user/group")
+}

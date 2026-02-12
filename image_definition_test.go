@@ -1,6 +1,7 @@
 package dalec
 
 import (
+	"strings"
 	"testing"
 
 	"gotest.tools/v3/assert"
@@ -398,5 +399,148 @@ func TestGetNamedImageBases(t *testing.T) {
 		bases := spec.GetNamedImageBases("img", "t1")
 		assert.Check(t, cmp.Len(bases, 1))
 		assert.Check(t, cmp.Equal(bases[0].Rootfs.DockerImage.Ref, "target:2"))
+	})
+}
+
+func TestImageDefinitionValidate(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil_returns_nil", func(t *testing.T) {
+		t.Parallel()
+		var d *ImageDefinition
+		assert.NilError(t, d.validate())
+	})
+
+	t.Run("empty_returns_nil", func(t *testing.T) {
+		t.Parallel()
+		d := &ImageDefinition{}
+		assert.NilError(t, d.validate())
+	})
+
+	t.Run("valid_image_config_returns_nil", func(t *testing.T) {
+		t.Parallel()
+		d := &ImageDefinition{
+			ImageConfig: ImageConfig{
+				Entrypoint: "/bin/foo",
+				Env:        []string{"A=1"},
+				Bases: []BaseImage{
+					{Rootfs: Source{DockerImage: &SourceDockerImage{Ref: "base:1"}}},
+				},
+			},
+			Packages: []string{"pkg-a"},
+		}
+		assert.NilError(t, d.validate())
+	})
+
+	t.Run("invalid_image_config_base_and_bases", func(t *testing.T) {
+		t.Parallel()
+		d := &ImageDefinition{
+			ImageConfig: ImageConfig{
+				Base: "some-image:latest",
+				Bases: []BaseImage{
+					{Rootfs: Source{DockerImage: &SourceDockerImage{Ref: "base:1"}}},
+				},
+			},
+		}
+		err := d.validate()
+		assert.Assert(t, err != nil)
+		assert.Assert(t, strings.Contains(err.Error(), "cannot specify both image.base and image.bases"))
+	})
+
+	t.Run("invalid_test_spec_mount", func(t *testing.T) {
+		t.Parallel()
+		d := &ImageDefinition{
+			Tests: []*TestSpec{
+				{
+					Name: "bad-mount-test",
+					Mounts: []SourceMount{
+						{
+							Dest: "/", // Invalid: mount dest must not be "/"
+							Spec: Source{
+								Inline: &SourceInline{
+									File: &SourceInlineFile{Contents: "x"},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		err := d.validate()
+		assert.Assert(t, err != nil)
+		assert.Assert(t, strings.Contains(err.Error(), "bad-mount-test"))
+		assert.Assert(t, strings.Contains(err.Error(), "mount /"))
+	})
+
+	t.Run("combined_image_config_and_test_errors", func(t *testing.T) {
+		t.Parallel()
+		d := &ImageDefinition{
+			ImageConfig: ImageConfig{
+				Base: "some-image:latest",
+				Bases: []BaseImage{
+					{Rootfs: Source{DockerImage: &SourceDockerImage{Ref: "base:1"}}},
+				},
+			},
+			Tests: []*TestSpec{
+				{
+					Name: "bad-test",
+					Mounts: []SourceMount{
+						{
+							Dest: "/",
+							Spec: Source{
+								Inline: &SourceInline{
+									File: &SourceInlineFile{Contents: "x"},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		err := d.validate()
+		assert.Assert(t, err != nil)
+		errStr := err.Error()
+		// Both errors should be reported.
+		assert.Assert(t, strings.Contains(errStr, "cannot specify both image.base and image.bases"))
+		assert.Assert(t, strings.Contains(errStr, "bad-test"))
+	})
+
+	t.Run("multiple_test_errors", func(t *testing.T) {
+		t.Parallel()
+		d := &ImageDefinition{
+			Tests: []*TestSpec{
+				{
+					Name: "test-a",
+					Mounts: []SourceMount{
+						{
+							Dest: "/",
+							Spec: Source{
+								Inline: &SourceInline{
+									File: &SourceInlineFile{Contents: "x"},
+								},
+							},
+						},
+					},
+				},
+				{
+					Name: "test-b",
+					Mounts: []SourceMount{
+						{
+							Dest: "/",
+							Spec: Source{
+								Inline: &SourceInline{
+									File: &SourceInlineFile{Contents: "y"},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		err := d.validate()
+		assert.Assert(t, err != nil)
+		errStr := err.Error()
+		assert.Assert(t, strings.Contains(errStr, "test-a"))
+		assert.Assert(t, strings.Contains(errStr, "test-b"))
 	})
 }
