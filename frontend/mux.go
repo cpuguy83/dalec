@@ -243,15 +243,9 @@ func maybeSetDalecTargetKey(client gwclient.Client, key string) gwclient.Client 
 		return client
 	}
 
-	// optimization to help prevent unnecessary grpc requests
-	// The gateway client will make a grpc request to get the build opts from the gateway.
-	// This just caches those opts locally.
-	// If the client is already a clientWithCustomOpts, then the opts are already cached.
-	if _, ok := client.(*clientWithCustomOpts); !ok {
-		// this forces the client to use our cached opts from above
-		client = &clientWithCustomOpts{opts: opts, Client: client}
-	}
-	return setClientOptOption(client, map[string]string{keyTopLevelTarget: key, "build-arg:" + dalec.KeyDalecTarget: key})
+	opts.Opts[keyTopLevelTarget] = key
+	opts.Opts["build-arg:"+dalec.KeyDalecTarget] = key
+	return withCurrentFrontend(client, &clientWithCustomOpts{opts: opts, Client: client})
 }
 
 // list outputs the list of targets that are supported by the mux
@@ -513,9 +507,33 @@ type CurrentFrontend interface {
 	CurrentFrontend() (*llb.State, error)
 }
 
+// withCurrentFrontend wraps a [gwclient.Client] so that it implements [CurrentFrontend]
+// if the inner client does.
+// This is needed because [gwclient.Client] is an interface that does not include [CurrentFrontend],
+// but the concrete implementation provided by buildkit does.
+// When a client wrapper embeds [gwclient.Client], Go's embedding only promotes methods
+// defined in the interface, not methods on the underlying concrete type.
+// This function checks if the inner client implements [CurrentFrontend] and, if so,
+// returns a wrapper that delegates [CurrentFrontend] calls to it.
+func withCurrentFrontend(inner gwclient.Client, wrapper gwclient.Client) gwclient.Client {
+	cf, ok := inner.(CurrentFrontend)
+	if !ok {
+		return wrapper
+	}
+	return &clientwithCurrentFrontend{Client: wrapper, cf: cf}
+}
+
+type clientwithCurrentFrontend struct {
+	gwclient.Client
+	cf CurrentFrontend
+}
+
+func (c *clientwithCurrentFrontend) CurrentFrontend() (*llb.State, error) {
+	return c.cf.CurrentFrontend()
+}
+
 var (
 	_ gwclient.Client = (*clientWithCustomOpts)(nil)
-	_ CurrentFrontend = (*clientWithCustomOpts)(nil)
 )
 
 type clientWithCustomOpts struct {
@@ -523,7 +541,7 @@ type clientWithCustomOpts struct {
 	gwclient.Client
 }
 
-func trimTargetOpt(client gwclient.Client, prefix string) *clientWithCustomOpts {
+func trimTargetOpt(client gwclient.Client, prefix string) gwclient.Client {
 	opts := client.BuildOpts()
 
 	updated := strings.TrimPrefix(opts.Opts[keyTarget], prefix)
@@ -531,29 +549,26 @@ func trimTargetOpt(client gwclient.Client, prefix string) *clientWithCustomOpts 
 		updated = updated[1:]
 	}
 	opts.Opts[keyTarget] = updated
-	return &clientWithCustomOpts{
+	return withCurrentFrontend(client, &clientWithCustomOpts{
 		Client: client,
 		opts:   opts,
-	}
+	})
 }
 
-func setClientOptOption(client gwclient.Client, extraOpts map[string]string) *clientWithCustomOpts {
+func setClientOptOption(client gwclient.Client, extraOpts map[string]string) gwclient.Client {
 	opts := client.BuildOpts()
 
 	for key, value := range extraOpts {
 		opts.Opts[key] = value
 	}
-	return &clientWithCustomOpts{
+	return withCurrentFrontend(client, &clientWithCustomOpts{
 		Client: client,
 		opts:   opts,
-	}
+	})
 }
 
 func (d *clientWithCustomOpts) BuildOpts() gwclient.BuildOpts {
 	return d.opts
-}
-func (d *clientWithCustomOpts) CurrentFrontend() (*llb.State, error) {
-	return d.Client.(CurrentFrontend).CurrentFrontend()
 }
 
 // Handler returns a [gwclient.BuildFunc] that uses the mux to route requests to appropriate handlers

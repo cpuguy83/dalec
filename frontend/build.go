@@ -199,13 +199,17 @@ func WithDefaultPlatform(platform ocispecs.Platform, build gwclient.BuildFunc) g
 		if client.BuildOpts().Opts["platform"] != "" {
 			return build(ctx, client)
 		}
-		client = &clientWithPlatform{
+		client = withCurrentFrontend(client, &clientWithPlatform{
 			Client:   client,
 			platform: &platform,
-		}
+		})
 		return build(ctx, client)
 	}
 }
+
+var (
+	_ gwclient.Client = (*clientWithPlatform)(nil)
+)
 
 type clientWithPlatform struct {
 	gwclient.Client

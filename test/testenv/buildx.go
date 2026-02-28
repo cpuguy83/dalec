@@ -18,6 +18,7 @@ import (
 
 	"github.com/cpuguy83/dockercfg"
 	"github.com/moby/buildkit/client"
+	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/session/auth"
 	"github.com/moby/buildkit/session/secrets/secretsprovider"
@@ -398,6 +399,10 @@ type clientForceDalecWithInput struct {
 	gwclient.Client
 }
 
+func (c *clientForceDalecWithInput) CurrentFrontend() (*llb.State, error) {
+	return c.Client.(interface{ CurrentFrontend() (*llb.State, error) }).CurrentFrontend()
+}
+
 func (c *clientForceDalecWithInput) Solve(ctx context.Context, req gwclient.SolveRequest) (*gwclient.Result, error) {
 	if req.Definition == nil {
 		// Only inject the frontend when there is no "definition" set.
@@ -420,7 +425,11 @@ type gwClientInputInject struct {
 	f  gwclient.BuildFunc
 }
 
-func wrapWithInput(c gwclient.Client, id string, f gwclient.BuildFunc) *gwClientInputInject {
+func (c *gwClientInputInject) CurrentFrontend() (*llb.State, error) {
+	return c.Client.(interface{ CurrentFrontend() (*llb.State, error) }).CurrentFrontend()
+}
+
+func wrapWithInput(c gwclient.Client, id string, f gwclient.BuildFunc) gwclient.Client {
 	return &gwClientInputInject{
 		Client: c,
 		id:     id,
