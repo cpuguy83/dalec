@@ -46,4 +46,8 @@ Automated scanners in GitHub monitor direct and transitive dependencies. Dependa
 
 ## Secret Management
 
-The project does not maintain long-lived shared secrets in source control or CI. Workflow automation relies only on the GitHub-provided `GITHUB_TOKEN`, which GitHub scopes automatically: in `ci.yml` it has minimal read/package permissions for pull-request and branch builds, and in release workflows it receives package-publish access only when a signed tag triggers the job. Maintainers monitor the default token permissions and avoid storing additional credentials in repository settings.
+The project does not maintain long-lived shared secrets in source control or CI. Workflow automation relies only on the GitHub-provided `GITHUB_TOKEN`, which GitHub scopes automatically: in `ci.yml` it has minimal read/package permissions for pull-request and branch builds, and in release workflows it receives package-publish access only after a signed release is published. Maintainers monitor the default token permissions and avoid storing additional credentials in repository settings.
+
+## Release Process
+
+Releases are requested through pull requests that add or update one `.github/releases/<tag>.md` file on `main` or the relevant `release/**` branch. The file uses YAML front matter for automation fields and Markdown body content for reviewer context. After the PR is merged, the `Create Release` workflow waits for approval through the `release` environment, creates or verifies a Sigstore `gitsign` tag for the requested commit using GitHub Actions OIDC, publishes the immutable GitHub Release with generated notes, and dispatches the image publishing workflows. This keeps release metadata reviewable in Git history without requiring maintainers to store or manage persistent private signing keys.

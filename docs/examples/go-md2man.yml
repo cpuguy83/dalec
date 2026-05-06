@@ -16,7 +16,7 @@ sources:
       - gomod: {}
     git:
       url: https://github.com/cpuguy83/go-md2man.git
-      commit: v2.0.3
+      commit: 061b6c7cbecd6752049221aa15b7a05160796698 # v2.0.3
 
 dependencies:
   build:
