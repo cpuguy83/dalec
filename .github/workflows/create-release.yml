@@ -201,6 +201,8 @@ jobs:
       - name: Create immutable release and start publishing
         env:
           GH_TOKEN: ${{ github.token }}
+          CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/create-release.yml@${{ github.ref }}
+          IMAGE_REPO: ${{ github.repository }}
           NOTES_START_TAG: ${{ steps.release.outputs.notes_start_tag }}
           PRERELEASE: ${{ steps.release.outputs.prerelease }}
           RELEASE_NOTES_FILE: ${{ steps.release.outputs.release_notes_file }}
@@ -211,20 +213,38 @@ jobs:
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
             echo "Release ${TAG_NAME} already exists."
           else
+            notes_file="$(mktemp)"
+
+            # Curated notes from the release request, when present.
+            if [ -n "$RELEASE_NOTES_FILE" ]; then
+              cat "$RELEASE_NOTES_FILE" >> "$notes_file"
+              printf '\n\n' >> "$notes_file"
+            fi
+
+            # GitHub's generated changelog.
+            generate_args=(-f tag_name="$TAG_NAME")
+            if [ -n "$NOTES_START_TAG" ]; then
+              generate_args+=(-f previous_tag_name="$NOTES_START_TAG")
+            fi
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              "${generate_args[@]}" --jq .body >> "$notes_file"
+
+            # Signature verification instructions. The Git tag is signed by this
+            # workflow; the release images are signed under the tag ref by
+            # frontend-image.yml, so they use a refs/tags/<tag> identity.
+            printf '\n' >> "$notes_file"
+            sed \
+              -e "s|\${TAG_NAME}|${TAG_NAME}|g" \
+              -e "s|\${CERTIFICATE_IDENTITY}|${CERTIFICATE_IDENTITY}|g" \
+              -e "s|\${IMAGE_REPO}|${IMAGE_REPO}|g" \
+              "${GITHUB_WORKSPACE}/.github/release-notes/verification.md.tmpl" >> "$notes_file"
+
             args=(
               "$TAG_NAME"
               --verify-tag
-              --generate-notes
               --title "$TAG_NAME"
+              --notes-file "$notes_file"
             )
-
-            if [ -n "$NOTES_START_TAG" ]; then
-              args+=(--notes-start-tag "$NOTES_START_TAG")
-            fi
-
-            if [ -n "$RELEASE_NOTES_FILE" ]; then
-              args+=(--notes "$(cat "$RELEASE_NOTES_FILE")")
-            fi
 
             if [ "$PRERELEASE" = "true" ]; then
               args+=(--prerelease --latest=false)

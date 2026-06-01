@@ -67,6 +67,7 @@ jobs:
       packages: write
       id-token: write  # Required for cosign OIDC signing
       attestations: write  # Required for GitHub attestations
+      artifact-metadata: write # Must be granted here so the called workflow can request it
 
     needs: tagList
     uses: ./.github/workflows/frontend-image.yml

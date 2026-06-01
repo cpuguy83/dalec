@@ -1,0 +1,29 @@
+## Verifying this release
+
+This release is signed end-to-end with [Sigstore](https://www.sigstore.dev/) keyless signing.
+
+### Verify the Git tag
+
+The `${TAG_NAME}` tag is signed with [gitsign](https://github.com/sigstore/gitsign):
+
+```sh
+gitsign verify-tag \
+  --certificate-identity="${CERTIFICATE_IDENTITY}" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  ${TAG_NAME}
+```
+
+### Verify the release images
+
+Release artifacts are published as signed container images and are not attached
+to this GitHub release. To verify the frontend image for this release with
+[cosign](https://github.com/sigstore/cosign):
+
+```sh
+cosign verify ghcr.io/${IMAGE_REPO}/frontend:${TAG_NAME} \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  --certificate-identity="https://github.com/${IMAGE_REPO}/.github/workflows/frontend-image.yml@refs/tags/${TAG_NAME}"
+```
+
+See the [image verification guide](https://project-dalec.github.io/dalec/verifying-images)
+for worker images and `gh attestation verify` instructions.
