@@ -256,6 +256,10 @@ jobs:
           # Build and publish the release images, then BLOCK until they finish so
           # this release run only succeeds once the signed images exist. Each
           # build uploads its own *.digest.json asset to the release.
+          #
+          # This is idempotent: if a run for the tag already succeeded or is
+          # in flight (e.g. on a re-run after a transient runner failure), it is
+          # reused instead of dispatching a redundant rebuild.
           dispatch_and_capture() {
             local wf="$1" before id
             before="$(date -u -d '-1 minute' +%Y-%m-%dT%H:%M:%SZ)"
@@ -280,14 +284,27 @@ jobs:
             echo "$id"
           }
 
-          release_run_id="$(dispatch_and_capture release.yml)"
-          worker_run_id="$(dispatch_and_capture worker-images.yml)"
+          # Reuse an existing successful or in-flight run for the tag, else
+          # dispatch a new one; then block until it finishes.
+          ensure_built() {
+            local wf="$1" id
+            id="$(gh run list --workflow "$wf" --branch "$TAG_NAME" --event workflow_dispatch \
+              --json databaseId,status,conclusion,createdAt \
+              --jq '[.[] | select(.conclusion == "success" or .status == "in_progress" or .status == "queued")] | sort_by(.createdAt) | last | .databaseId' 2>/dev/null || true)"
 
-          echo "Waiting for release.yml run ${release_run_id} and worker-images.yml run ${worker_run_id} ..."
+            if [ -z "$id" ] || [ "$id" = "null" ]; then
+              id="$(dispatch_and_capture "$wf")"
+            else
+              echo "Reusing existing ${wf} run ${id} for ${TAG_NAME}." >&2
+            fi
+
+            echo "Waiting for ${wf} run ${id} ..."
+            gh run watch "$id" --exit-status --interval 20
+          }
 
           rc=0
-          gh run watch "$release_run_id" --exit-status --interval 20 || rc=1
-          gh run watch "$worker_run_id" --exit-status --interval 20 || rc=1
+          ensure_built release.yml || rc=1
+          ensure_built worker-images.yml || rc=1
 
           if [ "$rc" -ne 0 ]; then
             echo "One or more image builds failed; see the runs above." >&2
