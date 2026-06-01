@@ -247,13 +247,26 @@ jobs:
               --verify-tag
               --title "$TAG_NAME"
               --notes-file "$notes_file"
+              --draft
             )
 
             if [ "$PRERELEASE" = "true" ]; then
-              args+=(--prerelease --latest=false)
+              args+=(--prerelease)
             fi
 
+            # Create the release as a draft so the image builds can attach their
+            # signed digest manifests to it. Immutable releases reject asset
+            # uploads once published, so we publish only after the builds finish.
             gh release create "${args[@]}"
+          fi
+
+          # Non-prerelease releases become "latest". The image builds normally
+          # infer this from the published release, but our release is still a
+          # draft while they run, so pass the decision explicitly.
+          if [ "$PRERELEASE" = "true" ]; then
+            make_latest=false
+          else
+            make_latest=true
           fi
 
           # Build and publish the release images, then BLOCK until they finish so
@@ -266,7 +279,7 @@ jobs:
           dispatch_and_capture() {
             local wf="$1" before id
             before="$(date -u -d '-1 minute' +%Y-%m-%dT%H:%M:%SZ)"
-            gh workflow run "$wf" --ref "$TAG_NAME" >&2
+            gh workflow run "$wf" --ref "$TAG_NAME" -f make_latest="$make_latest" >&2
 
             id=""
             for _ in $(seq 1 30); do
@@ -311,6 +324,21 @@ jobs:
 
           if [ "$rc" -ne 0 ]; then
             echo "One or more image builds failed; see the runs above." >&2
+            echo "The release remains an unpublished draft." >&2
             exit 1
+          fi
+
+          # All signed images and their digest manifests are attached to the
+          # draft. Publish it now, which locks it immutably with the assets in
+          # place. Using GITHUB_TOKEN here does not re-trigger the build
+          # workflows.
+          if [ "$(gh release view "$TAG_NAME" --json isDraft -q .isDraft)" = "true" ]; then
+            publish_args=("$TAG_NAME" --draft=false)
+            if [ "$PRERELEASE" = "true" ]; then
+              publish_args+=(--prerelease --latest=false)
+            else
+              publish_args+=(--latest=true)
+            fi
+            gh release edit "${publish_args[@]}"
           fi
         shell: bash

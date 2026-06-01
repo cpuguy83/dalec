@@ -9,6 +9,11 @@ on:
     types:
       - published
   workflow_dispatch:
+    inputs:
+      make_latest:
+        description: 'Whether to also tag images as latest (true/false). Empty = infer from the published release.'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -44,9 +49,19 @@ jobs:
             "type=raw,value=${TRIMMED_REF_NAME}"
           )
 
-          # Check if this tag is the latest release by fetching the latest release and comparing the tag to the tag being built.
-          LATEST_TAG="$(gh release view --json tagName -q .tagName)"
-          if [ "$REF_NAME" = "$LATEST_TAG" ]; then
+          # Check if this tag is the latest release. When dispatched by
+          # create-release the decision is passed explicitly (the release is
+          # still a draft at this point); otherwise infer it from the latest
+          # published release.
+          MAKE_LATEST="${{ inputs.make_latest }}"
+          if [ -n "$MAKE_LATEST" ]; then
+            IS_LATEST="$MAKE_LATEST"
+          elif [ "$(gh release view --json tagName -q .tagName)" = "$REF_NAME" ]; then
+            IS_LATEST=true
+          else
+            IS_LATEST=false
+          fi
+          if [ "$IS_LATEST" = "true" ]; then
             OUTPUT_TAGS=("type=raw,value=latest" "${OUTPUT_TAGS[@]}")
           fi
 

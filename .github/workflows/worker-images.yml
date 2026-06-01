@@ -15,6 +15,11 @@ on:
       - '.github/workflows/worker-images/matrix.json'
       - '.github/workflows/worker-images.yml'
   workflow_dispatch:
+    inputs:
+      make_latest:
+        description: 'Whether to also tag images as latest (true/false). Empty = infer from the published release.'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -127,8 +132,17 @@ jobs:
           # Inline the cache with the image so others can use it as a cache-from for their own builds.
           EXTRA_FLAGS="--set worker.cache-to=type=inline,mode=max --set worker.tags=${ref} --push"
 
-          latest="$(gh release view --json tagName -q .tagName)"
-          if [ "${{ github.ref_name }}" = "${latest}" ]; then
+          latest="$(gh release view --json tagName -q .tagName || echo '')"
+          MAKE_LATEST="${{ inputs.make_latest }}"
+          if [ -n "$MAKE_LATEST" ]; then
+            IS_LATEST="$MAKE_LATEST"
+          elif [ "${{ github.ref_name }}" = "${latest}" ]; then
+            IS_LATEST=true
+          else
+            IS_LATEST=false
+          fi
+          echo "IS_LATEST=${IS_LATEST}" >> $GITHUB_ENV
+          if [ "${IS_LATEST}" = "true" ]; then
             # If this is the latest release, we also tag it as "latest"
             IMAGE_REPO_LATEST="${BASE_REPO}:latest"
             EXTRA_FLAGS+=" --set worker.tags=ghcr.io/${IMAGE_REPO_LATEST}"
@@ -176,9 +190,9 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/worker-images.yml@${{ github.ref }}"
           
-          # If there's a latest tag, sign that too
-          latest="$(gh release view --json tagName -q .tagName || echo '')"
-          if [ "${{ github.ref_name }}" = "${latest}" ]; then
+          # If this is the latest release, sign that tag too. IS_LATEST is
+          # computed in the build step above.
+          if [ "${IS_LATEST:-false}" = "true" ]; then
             IMAGE_REPO_LATEST="${BASE_REPO}:latest"
             ref_latest="ghcr.io/${IMAGE_REPO_LATEST}"
             cosign sign --yes "${ref_latest}@${DIGEST}"
