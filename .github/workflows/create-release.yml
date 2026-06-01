@@ -231,10 +231,13 @@ jobs:
 
             # Signature verification instructions. The Git tag is signed by this
             # workflow; the release images are signed under the tag ref by
-            # frontend-image.yml, so they use a refs/tags/<tag> identity.
+            # frontend-image.yml, so they use a refs/tags/<tag> identity. The
+            # frontend image tag itself drops the leading "v" (e.g. 0.24.0).
             printf '\n' >> "$notes_file"
+            image_tag="${TAG_NAME#v}"
             sed \
               -e "s|\${TAG_NAME}|${TAG_NAME}|g" \
+              -e "s|\${IMAGE_TAG}|${image_tag}|g" \
               -e "s|\${CERTIFICATE_IDENTITY}|${CERTIFICATE_IDENTITY}|g" \
               -e "s|\${IMAGE_REPO}|${IMAGE_REPO}|g" \
               "${GITHUB_WORKSPACE}/.github/release-notes/verification.md.tmpl" >> "$notes_file"

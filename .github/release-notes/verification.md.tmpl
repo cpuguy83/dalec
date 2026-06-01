@@ -21,7 +21,7 @@ keyless signing. To verify the frontend image for this release with
 [cosign](https://github.com/sigstore/cosign):
 
 ```sh
-cosign verify ghcr.io/${IMAGE_REPO}/frontend:${TAG_NAME} \
+cosign verify ghcr.io/${IMAGE_REPO}/frontend:${IMAGE_TAG} \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
   --certificate-identity="https://github.com/${IMAGE_REPO}/.github/workflows/frontend-image.yml@refs/tags/${TAG_NAME}"
 ```
