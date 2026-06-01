@@ -164,6 +164,7 @@ jobs:
           GITSIGN_TOKEN_PROVIDER: github-actions
           TAG_NAME: ${{ steps.release.outputs.tag }}
           TARGET_SHA: ${{ steps.release.outputs.target }}
+          RELEASE_NOTES_FILE: ${{ steps.release.outputs.release_notes_file }}
         run: |
           set -euo pipefail
 
@@ -188,7 +189,17 @@ jobs:
           git config gpg.format x509
           git config tag.gpgsign true
 
-          git tag -s "$TAG_NAME" "$TARGET_SHA" -m "Dalec ${TAG_NAME}"
+          # Annotate the tag with the curated release notes so the signed tag is
+          # self-describing. The subject line is the release title; the body, if
+          # the request supplied one, follows after a blank line.
+          tag_message_file="$(mktemp)"
+          printf 'Dalec %s\n' "$TAG_NAME" > "$tag_message_file"
+          if [ -n "${RELEASE_NOTES_FILE:-}" ] && [ -s "$RELEASE_NOTES_FILE" ]; then
+            printf '\n' >> "$tag_message_file"
+            cat "$RELEASE_NOTES_FILE" >> "$tag_message_file"
+          fi
+
+          git tag -s "$TAG_NAME" "$TARGET_SHA" -F "$tag_message_file"
 
           gitsign verify-tag \
             --certificate-identity="$CERTIFICATE_IDENTITY" \
