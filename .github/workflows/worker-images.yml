@@ -211,7 +211,7 @@ jobs:
             exit 0
           fi
 
-          manifest="worker-${TARGET//\//-}.digest.json"
+          manifest="${TARGET//\//-}.digest.json"
           jq -n \
             --arg image "$IMAGE" \
             --arg digest "$DIGEST" \
@@ -219,5 +219,11 @@ jobs:
             '{image: $image, digest: $digest, target: $target}' \
             > "$manifest"
 
-          gh release upload "$REF_NAME" "$manifest" --clobber
+          # Sign the digest manifest so the release-to-digest mapping is
+          # verifiable, not just an unauthenticated pointer.
+          cosign sign-blob --yes \
+            --bundle "${manifest}.cosign.bundle" \
+            "$manifest"
+
+          gh release upload "$REF_NAME" "$manifest" "${manifest}.cosign.bundle" --clobber
         shell: bash

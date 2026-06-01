@@ -28,3 +28,20 @@ cosign verify ghcr.io/${IMAGE_REPO}/frontend:${IMAGE_TAG} \
 
 See the [image verification guide](https://project-dalec.github.io/dalec/verifying-images)
 for worker images and `gh attestation verify` instructions.
+
+### Verify the digest manifests
+
+Each `*.digest.json` asset records the exact image digest built for this
+release and is itself signed with cosign keyless signing. The signature is
+attached as a matching `*.digest.json.cosign.bundle` asset. To verify a digest
+manifest (for example `frontend.digest.json`):
+
+```sh
+cosign verify-blob frontend.digest.json \
+  --bundle frontend.digest.json.cosign.bundle \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  --certificate-identity="https://github.com/${IMAGE_REPO}/.github/workflows/frontend-image.yml@refs/tags/${TAG_NAME}"
+```
+
+Worker digest manifests are signed by `worker-images.yml`; substitute that
+workflow in the `--certificate-identity` value when verifying them.
