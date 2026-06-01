@@ -40,6 +40,7 @@ jobs:
 
   build-worker-images:
     permissions:
+      contents: write  # Required to upload the digest manifest to the release
       packages: write
       id-token: write  # Required for cosign OIDC signing
       attestations: write  # Required for GitHub attestations
@@ -192,3 +193,31 @@ jobs:
           subject-name: ${{ steps.sign.outputs.image-name }}
           subject-digest: ${{ steps.sign.outputs.digest }}
           push-to-registry: true
+
+      - name: Attach digest manifest to release
+        if: ${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_NAME: ${{ github.ref_name }}
+          IMAGE: ${{ steps.sign.outputs.image-name }}
+          DIGEST: ${{ steps.sign.outputs.digest }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+
+          # Only record provenance when this build corresponds to a release tag.
+          if ! gh release view "$REF_NAME" >/dev/null 2>&1; then
+            echo "No release for ${REF_NAME}; skipping digest manifest upload."
+            exit 0
+          fi
+
+          manifest="worker-${TARGET}.digest.json"
+          jq -n \
+            --arg image "$IMAGE" \
+            --arg digest "$DIGEST" \
+            --arg target "$TARGET" \
+            '{image: $image, digest: $digest, target: $target}' \
+            > "$manifest"
+
+          gh release upload "$REF_NAME" "$manifest" --clobber
+        shell: bash

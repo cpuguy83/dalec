@@ -63,7 +63,7 @@ jobs:
 
   build:
     permissions:
-      contents: read
+      contents: write  # Required to upload the digest manifest to the release
       packages: write
       id-token: write  # Required for cosign OIDC signing
       attestations: write  # Required for GitHub attestations

@@ -198,7 +198,7 @@ jobs:
           git push origin "refs/tags/${TAG_NAME}"
         shell: bash
 
-      - name: Create immutable release and start publishing
+      - name: Create release and publish images
         env:
           GH_TOKEN: ${{ github.token }}
           CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/create-release.yml@${{ github.ref }}
@@ -253,6 +253,44 @@ jobs:
             gh release create "${args[@]}"
           fi
 
-          gh workflow run release.yml --ref "$TAG_NAME"
-          gh workflow run worker-images.yml --ref "$TAG_NAME"
+          # Build and publish the release images, then BLOCK until they finish so
+          # this release run only succeeds once the signed images exist. Each
+          # build uploads its own *.digest.json asset to the release.
+          dispatch_and_capture() {
+            local wf="$1" before id
+            before="$(date -u -d '-1 minute' +%Y-%m-%dT%H:%M:%SZ)"
+            gh workflow run "$wf" --ref "$TAG_NAME" >&2
+
+            id=""
+            for _ in $(seq 1 30); do
+              id="$(gh run list --workflow "$wf" --event workflow_dispatch \
+                --json databaseId,headBranch,createdAt \
+                --jq "[.[] | select(.headBranch==\"${TAG_NAME}\" and .createdAt >= \"${before}\")] | sort_by(.createdAt) | last | .databaseId" 2>/dev/null || true)"
+              if [ -n "$id" ] && [ "$id" != "null" ]; then
+                break
+              fi
+              id=""
+              sleep 5
+            done
+
+            if [ -z "$id" ]; then
+              echo "Could not find a dispatched run for ${wf} on ${TAG_NAME}." >&2
+              return 1
+            fi
+            echo "$id"
+          }
+
+          release_run_id="$(dispatch_and_capture release.yml)"
+          worker_run_id="$(dispatch_and_capture worker-images.yml)"
+
+          echo "Waiting for release.yml run ${release_run_id} and worker-images.yml run ${worker_run_id} ..."
+
+          rc=0
+          gh run watch "$release_run_id" --exit-status --interval 20 || rc=1
+          gh run watch "$worker_run_id" --exit-status --interval 20 || rc=1
+
+          if [ "$rc" -ne 0 ]; then
+            echo "One or more image builds failed; see the runs above." >&2
+            exit 1
+          fi
         shell: bash
