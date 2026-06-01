@@ -31,7 +31,7 @@ jobs:
       - name: Harden Runner
         uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.16.1
         with:
-          egress-policy: audit
+          egress-policy: block
           allowed-endpoints: >
             api.github.com:443
             fulcio.sigstore.dev:443
@@ -175,7 +175,7 @@ jobs:
               exit 1
             fi
 
-            gitsign verify \
+            gitsign verify-tag \
               --certificate-identity="$CERTIFICATE_IDENTITY" \
               --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
               "$TAG_NAME"
@@ -190,7 +190,7 @@ jobs:
 
           git tag -s "$TAG_NAME" "$TARGET_SHA" -m "Dalec ${TAG_NAME}"
 
-          gitsign verify \
+          gitsign verify-tag \
             --certificate-identity="$CERTIFICATE_IDENTITY" \
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
             "$TAG_NAME"
