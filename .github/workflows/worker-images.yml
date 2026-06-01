@@ -211,7 +211,7 @@ jobs:
             exit 0
           fi
 
-          manifest="worker-${TARGET}.digest.json"
+          manifest="worker-${TARGET//\//-}.digest.json"
           jq -n \
             --arg image "$IMAGE" \
             --arg digest "$DIGEST" \
