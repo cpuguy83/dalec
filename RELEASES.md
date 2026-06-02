@@ -17,6 +17,7 @@ after a release request merges and the `release` environment is approved.
 - [The release request file](#the-release-request-file)
 - [What the workflow does](#what-the-workflow-does)
 - [Artifacts produced by a release](#artifacts-produced-by-a-release)
+- [Which branch should a release request go on?](#which-branch-should-a-release-request-go-on)
 - [Patch releases](#patch-releases)
 - [Pre-releases](#pre-releases)
 - [Verifying a release](#verifying-a-release)
@@ -186,14 +187,38 @@ release request PR ──merge──▶ Create Release (release environment appr
 - cosign signatures and build-provenance attestations for every image, stored in
   the registry.
 
+## Which branch should a release request go on?
+
+Release requests are accepted on `main` and on `release/**` branches, split by
+the kind of release:
+
+- **Minor and major releases** (`vX.Y.0`) are cut from **`main`**.
+- **Patch releases** (`vX.Y.Z`, `Z > 0`) are cut from the matching
+  **`release/**`** branch.
+
+The workflow enforces this: a request on `main` must use a `vX.Y.0` tag, and the
+`target` commit must be reachable from the branch the request is on.
+
+You cannot "always release from `main`". A patch is, by definition, a fix on top
+of an already-released minor line whose commit is generally **not reachable from
+`main`** (because `main` has moved on with newer, possibly breaking, unreleased
+work). The `release/**` branch holds that stable line, so it is the only place
+the patch's `target` commit is reachable. Release branches also let you backport
+a fix to an older line without dragging in everything that has since landed on
+`main`.
+
+The trade-off: the signed-tag identity is `create-release.yml@<branch ref>`, so
+it is `@refs/heads/main` for minors and `@refs/heads/release/...` for patches.
+Verifiers must substitute the branch the release was cut from (see
+[Verifying a release](#verifying-a-release)).
+
 ## Patch releases
 
 Patch releases (for example `v0.20.1`) are prepared on the relevant `release/**`
-branch, not on `main`. The workflow enforces this: a request on `main` must use a
-`vX.Y.0` tag. Set `target` to the commit on the release branch and
+branch, not on `main`. Set `target` to the commit on the release branch and
 `notes_start_tag` to the previous patch tag on that branch. The signing identity
-for a patch release is therefore `create-release.yml@refs/heads/release/...`
-rather than `@refs/heads/main` (relevant when verifying the tag).
+for a patch release is `create-release.yml@refs/heads/release/...` rather than
+`@refs/heads/main`, which matters when verifying the tag.
 
 ## Pre-releases
 
