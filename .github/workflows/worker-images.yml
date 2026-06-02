@@ -156,7 +156,22 @@ jobs:
           EXTRA_FLAGS="--set worker.cache-to=type=gha,scope=main.${{matrix.target}},mode=max --set worker.cache-from=type=gha,scope=${MAIN_CACHE_SCOPE}"
           echo "EXTRA_FLAGS=${EXTRA_FLAGS}" >> $GITHUB_ENV
       - name: Setup QEMU
-        run: docker run --rm --privileged tonistiigi/binfmt:latest --install all
+        run: |
+          set -eu -o pipefail
+
+          # Pinned by digest for reproducibility and signed-supply-chain hygiene.
+          # Retried with backoff because the image is pulled from Docker Hub,
+          # which intermittently times out and would otherwise fail the release.
+          image="tonistiigi/binfmt:latest@sha256:d3b963f787999e6c0219a48dba02978769286ff61a5f4d26245cb6a6e5567ea3"
+          for attempt in 1 2 3 4 5; do
+            if docker run --rm --privileged "$image" --install all; then
+              exit 0
+            fi
+            echo "QEMU/binfmt setup attempt ${attempt} failed; retrying in $((attempt * 10))s..." >&2
+            sleep "$((attempt * 10))"
+          done
+          echo "QEMU/binfmt setup failed after 5 attempts." >&2
+          exit 1
       - name: Expose GitHub tokens for caching
         uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
       - name: Build worker images
