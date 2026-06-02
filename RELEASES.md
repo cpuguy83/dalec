@@ -220,6 +220,28 @@ branch, not on `main`. Set `target` to the commit on the release branch and
 for a patch release is `create-release.yml@refs/heads/release/...` rather than
 `@refs/heads/main`, which matters when verifying the tag.
 
+### I haven't cut the release branch yet
+
+The release branch is a *prerequisite* for a patch, not something you wait for
+`main` to diverge before creating. The workflow rejects any non-`vX.Y.0` tag on
+`main` unconditionally — even if `main` has not moved since the minor and the
+`target` commit is therefore still reachable from `main`, the request is refused
+with `Patch releases should be prepared on their release/** branch, not main.`
+
+So if you need to ship `v0.5.1` and never cut `release/0.5`, create it first. In
+the common case where nothing has diverged it is identical to `main`:
+
+```sh
+git branch release/0.5 v0.5.0   # branch at the released minor tag
+git push origin release/0.5
+# then add .github/releases/v0.5.1.md (target = the patched commit) on that branch
+```
+
+Cutting the branch up front (ideally right when you ship the minor) keeps every
+patch in a line verifiable under a single, stable `@refs/heads/release/0.5`
+signing identity, instead of `v0.5.1` being signed under `@refs/heads/main` and
+later patches under `@refs/heads/release/0.5`.
+
 ## Pre-releases
 
 Set `prerelease: true` in the request. The release is marked as a pre-release,
