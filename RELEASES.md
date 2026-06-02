@@ -131,12 +131,18 @@ needed for signing and module download):
    notes, so the signed tag is self-describing. The tag is verified with
    `gitsign verify-tag` and pushed. If the tag already exists it must point at
    the same target and is re-verified (idempotent).
-3. **Create the release as a draft.** Renders the release body —
+3. **Ensure the release branch exists.** For a stable minor/major (`vX.Y.0` with
+   no pre-release suffix) cut from `main`, the job creates `release/X.Y` at the
+   **target commit** if it does not already exist, so future patches always have
+   a home with a stable `@refs/heads/release/X.Y` signing identity. It never
+   moves an existing branch. Patches (already on `release/**`) and pre-releases
+   skip this step.
+4. **Create the release as a draft.** Renders the release body —
    curated notes, then GitHub's generated changelog
    (`POST /releases/generate-notes`), then the verification instructions from
    [`.github/release-notes/verification.md.tmpl`](.github/release-notes/verification.md.tmpl)
    — and creates a **draft** release with `--verify-tag`.
-4. **Build, sign, and attach the images (blocking).** Dispatches the two image
+5. **Build, sign, and attach the images (blocking).** Dispatches the two image
    workflows at the **tag ref** and blocks until both succeed:
    - [`release.yml`](.github/workflows/release.yml) → builds/signs the
      **frontend** image via the reusable
@@ -153,7 +159,7 @@ needed for signing and module download):
 
    This step is idempotent: on a re-run it reuses an already successful or
    in-flight build for the tag instead of rebuilding.
-5. **Publish the release.** Once both builds succeed, the draft is published
+6. **Publish the release.** Once both builds succeed, the draft is published
    (`gh release edit --draft=false`, marked `--latest` unless it is a
    pre-release). Publishing locks the release **immutably** with all signed
    assets already attached. If either build fails, the job fails and the release
@@ -163,6 +169,7 @@ needed for signing and module download):
 release request PR ──merge──▶ Create Release (release environment approval)
                                   │
                                   ├─ sign + push tag (gitsign, notes in annotation)
+                                  ├─ ensure release/X.Y branch (stable minors only)
                                   ├─ create DRAFT release (notes + changelog + verify steps)
                                   ├─ dispatch + BLOCK on:
                                   │     ├─ release.yml      → frontend image (sign, attest, digest manifest)
@@ -192,7 +199,9 @@ release request PR ──merge──▶ Create Release (release environment appr
 Release requests are accepted on `main` and on `release/**` branches, split by
 the kind of release:
 
-- **Minor and major releases** (`vX.Y.0`) are cut from **`main`**.
+- **Minor and major releases** (`vX.Y.0`) are cut from **`main`**. The release
+  request file (and its curated notes) stays in `main`'s history, and the
+  workflow seeds the matching `release/X.Y` branch from the released commit.
 - **Patch releases** (`vX.Y.Z`, `Z > 0`) are cut from the matching
   **`release/**`** branch.
 
@@ -222,14 +231,17 @@ for a patch release is `create-release.yml@refs/heads/release/...` rather than
 
 ### I haven't cut the release branch yet
 
-The release branch is a *prerequisite* for a patch, not something you wait for
-`main` to diverge before creating. The workflow rejects any non-`vX.Y.0` tag on
-`main` unconditionally — even if `main` has not moved since the minor and the
-`target` commit is therefore still reachable from `main`, the request is refused
-with `Patch releases should be prepared on their release/** branch, not main.`
+Normally you don't have to. When a stable `vX.Y.0` is released from `main`, the
+workflow **automatically creates `release/X.Y`** at the released commit (see step
+3 of [What the workflow does](#what-the-workflow-does)), so the branch is waiting
+whenever you need the first patch.
 
-So if you need to ship `v0.5.1` and never cut `release/0.5`, create it first. In
-the common case where nothing has diverged it is identical to `main`:
+You only cut it by hand for minors that predate this automation, or if the branch
+was deleted. The workflow still rejects any non-`vX.Y.0` tag on `main`
+unconditionally — even if `main` has not moved since the minor and the `target`
+commit is therefore still reachable from `main`, the request is refused with
+`Patch releases should be prepared on their release/** branch, not main.` In the
+common case where nothing has diverged the branch is identical to `main`:
 
 ```sh
 git branch release/0.5 v0.5.0   # branch at the released minor tag
@@ -237,7 +249,7 @@ git push origin release/0.5
 # then add .github/releases/v0.5.1.md (target = the patched commit) on that branch
 ```
 
-Cutting the branch up front (ideally right when you ship the minor) keeps every
+Seeding the branch at the minor (which the workflow now does for you) keeps every
 patch in a line verifiable under a single, stable `@refs/heads/release/0.5`
 signing identity, instead of `v0.5.1` being signed under `@refs/heads/main` and
 later patches under `@refs/heads/release/0.5`.
