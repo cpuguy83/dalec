@@ -231,7 +231,10 @@ jobs:
             cat "$VERIFICATION_FILE" >> "$tag_message_file"
           fi
 
-          git tag -s "$TAG_NAME" "$TARGET_SHA" -F "$tag_message_file"
+          # --cleanup=verbatim preserves the message exactly; without it git
+          # treats Markdown headings ("## ...") in the notes and verification
+          # section as comment lines and strips them.
+          git tag -s --cleanup=verbatim "$TAG_NAME" "$TARGET_SHA" -F "$tag_message_file"
 
           gitsign verify-tag \
             --certificate-identity="$CERTIFICATE_IDENTITY" \
