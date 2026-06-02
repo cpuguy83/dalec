@@ -31,7 +31,8 @@ The release pipeline is built around supply-chain security:
 
 - The Git tag is an **annotated, signed tag** created with
   [gitsign](https://github.com/sigstore/gitsign) (Sigstore keyless). The tag
-  message carries the curated release notes.
+  message carries the curated release notes and the signature-verification
+  instructions, so the signed tag is self-describing.
 - The **frontend image** and every **worker image** are built, pushed to GHCR,
   signed with [cosign](https://github.com/sigstore/cosign) keyless signing, and
   get a [build-provenance attestation](https://docs.github.com/actions/security-guides/using-artifact-attestations).
@@ -127,10 +128,14 @@ needed for signing and module download):
    reachable from the branch, writes the curated notes to `release-notes.md`,
    and emits the `tag`, `target`, `prerelease`, and `notes_start_tag` outputs.
 2. **Create the signed tag.** Configures gitsign as the signing program and runs
-   `git tag -s`. The tag message is the release title plus the curated release
-   notes, so the signed tag is self-describing. The tag is verified with
-   `gitsign verify-tag` and pushed. If the tag already exists it must point at
-   the same target and is re-verified (idempotent).
+   `git tag -s`. The tag message is the release title, the curated release notes,
+   and the **verification instructions** (the same content rendered into the
+   release body, from
+   [`.github/release-notes/verification.md.tmpl`](.github/release-notes/verification.md.tmpl)),
+   so the signed tag is fully self-describing and the signature covers the
+   verification steps too. The tag is verified with `gitsign verify-tag` and
+   pushed. If the tag already exists it must point at the same target and is
+   re-verified (idempotent).
 3. **Ensure the release branch exists.** For a stable minor/major (`vX.Y.0` with
    no pre-release suffix) cut from `main`, the job creates `release/X.Y` at the
    **target commit** if it does not already exist, so future patches always have
@@ -180,7 +185,7 @@ release request PR ──merge──▶ Create Release (release environment appr
 ## Artifacts produced by a release
 
 - A signed, annotated **Git tag** `v<x.y.z>` whose message contains the curated
-  release notes.
+  release notes and the verification instructions.
 - An immutable **GitHub Release** with the rendered notes and, as assets, one
   `*.digest.json` + `*.digest.json.cosign.bundle` pair per image (frontend and
   each worker).

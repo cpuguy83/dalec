@@ -157,6 +157,32 @@ jobs:
           } >> "$GITHUB_OUTPUT"
         shell: bash
 
+      - name: Render verification notes
+        env:
+          CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/create-release.yml@${{ github.ref }}
+          IMAGE_REPO: ${{ github.repository }}
+          TAG_NAME: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # Render the signature-verification instructions once so the signed tag
+          # annotation and the GitHub release body share a single source of truth
+          # and can never drift. All placeholders are known at tag-creation time:
+          # the Git tag is signed by this workflow (CERTIFICATE_IDENTITY), while
+          # the images are signed under the tag ref by frontend-image.yml. The
+          # frontend image tag drops the leading "v" (e.g. 0.24.0).
+          verification_file="${RUNNER_TEMP}/verification.md"
+          image_tag="${TAG_NAME#v}"
+          sed \
+            -e "s|\${TAG_NAME}|${TAG_NAME}|g" \
+            -e "s|\${IMAGE_TAG}|${image_tag}|g" \
+            -e "s|\${CERTIFICATE_IDENTITY}|${CERTIFICATE_IDENTITY}|g" \
+            -e "s|\${IMAGE_REPO}|${IMAGE_REPO}|g" \
+            "${GITHUB_WORKSPACE}/.github/release-notes/verification.md.tmpl" > "$verification_file"
+
+          echo "VERIFICATION_FILE=${verification_file}" >> "$GITHUB_ENV"
+        shell: bash
+
       - name: Create signed tag
         env:
           CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/create-release.yml@${{ github.ref }}
@@ -189,14 +215,20 @@ jobs:
           git config gpg.format x509
           git config tag.gpgsign true
 
-          # Annotate the tag with the curated release notes so the signed tag is
-          # self-describing. The subject line is the release title; the body, if
-          # the request supplied one, follows after a blank line.
+          # Annotate the tag with the curated release notes and the verification
+          # instructions so the signed tag is fully self-describing. The subject
+          # line is the release title; the curated body, if the request supplied
+          # one, follows after a blank line; the verification section (shared with
+          # the GitHub release body) comes last so the signature covers it too.
           tag_message_file="$(mktemp)"
           printf 'Dalec %s\n' "$TAG_NAME" > "$tag_message_file"
           if [ -n "${RELEASE_NOTES_FILE:-}" ] && [ -s "$RELEASE_NOTES_FILE" ]; then
             printf '\n' >> "$tag_message_file"
             cat "$RELEASE_NOTES_FILE" >> "$tag_message_file"
+          fi
+          if [ -n "${VERIFICATION_FILE:-}" ] && [ -s "$VERIFICATION_FILE" ]; then
+            printf '\n' >> "$tag_message_file"
+            cat "$VERIFICATION_FILE" >> "$tag_message_file"
           fi
 
           git tag -s "$TAG_NAME" "$TARGET_SHA" -F "$tag_message_file"
@@ -249,8 +281,6 @@ jobs:
       - name: Create release and publish images
         env:
           GH_TOKEN: ${{ github.token }}
-          CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/create-release.yml@${{ github.ref }}
-          IMAGE_REPO: ${{ github.repository }}
           NOTES_START_TAG: ${{ steps.release.outputs.notes_start_tag }}
           PRERELEASE: ${{ steps.release.outputs.prerelease }}
           RELEASE_NOTES_FILE: ${{ steps.release.outputs.release_notes_file }}
@@ -277,18 +307,11 @@ jobs:
             gh api --method POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
               "${generate_args[@]}" --jq .body >> "$notes_file"
 
-            # Signature verification instructions. The Git tag is signed by this
-            # workflow; the release images are signed under the tag ref by
-            # frontend-image.yml, so they use a refs/tags/<tag> identity. The
-            # frontend image tag itself drops the leading "v" (e.g. 0.24.0).
+            # Signature verification instructions, rendered once in the
+            # "Render verification notes" step and shared with the signed tag
+            # annotation so the two can never drift.
             printf '\n' >> "$notes_file"
-            image_tag="${TAG_NAME#v}"
-            sed \
-              -e "s|\${TAG_NAME}|${TAG_NAME}|g" \
-              -e "s|\${IMAGE_TAG}|${image_tag}|g" \
-              -e "s|\${CERTIFICATE_IDENTITY}|${CERTIFICATE_IDENTITY}|g" \
-              -e "s|\${IMAGE_REPO}|${IMAGE_REPO}|g" \
-              "${GITHUB_WORKSPACE}/.github/release-notes/verification.md.tmpl" >> "$notes_file"
+            cat "$VERIFICATION_FILE" >> "$notes_file"
 
             args=(
               "$TAG_NAME"
