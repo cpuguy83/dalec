@@ -57,8 +57,10 @@ the request file format and the rest of the release metadata.
 
    What to highlight: user-facing features, behavior or default changes, breaking
    changes, notable fixes, security fixes, new target/distro support. What **not**
-   to highlight: routine dependency bumps, CI/test-only changes, internal
-   refactors, docs typos. Do not edit PR labels — that is a maintainer's call.
+   to highlight: dependency bumps (e.g. Dependabot PRs), test-only or CI changes,
+   documentation-only changes, and internal refactors with no user-visible effect.
+   A security-relevant dependency bump is the exception — call those out. Do not
+   edit PR labels — that is a maintainer's call.
 
 4. **Write the highlights.** Put a `## Release notes` section in
    `.github/releases/<tag>.md` (create the file from the `release-request` skill's
