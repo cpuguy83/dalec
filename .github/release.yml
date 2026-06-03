@@ -1,0 +1,37 @@
+# Configures the changelog that create-release.yml appends to every release via
+# the `generate-notes` API. A PR lands in the first category whose label it
+# matches, so the `release-note` "Highlights" category takes precedence over the
+# more generic ones. The final `*` category collects everything else so nothing
+# is silently dropped.
+#
+# Add the `release-note` label to any PR worth calling out; it both surfaces the
+# PR here under Highlights and feeds the curated "## Release notes" section in
+# the release request file (see RELEASES.md and the dalec-release-notes skill).
+#
+# https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+  categories:
+    - title: 🌟 Highlights
+      labels:
+        - release-note
+    - title: ⚠️ Breaking changes
+      labels:
+        - breaking-change
+    - title: ✨ Enhancements
+      labels:
+        - enhancement
+    - title: 🐛 Bug fixes
+      labels:
+        - bug
+    - title: 📝 Documentation
+      labels:
+        - documentation
+    - title: ⬆️ Dependencies
+      labels:
+        - dependencies
+    - title: Other changes
+      labels:
+        - "*"

@@ -334,13 +334,26 @@ jobs:
             gh release create "${args[@]}"
           fi
 
-          # Non-prerelease releases become "latest". The image builds normally
-          # infer this from the published release, but our release is still a
-          # draft while they run, so pass the decision explicitly.
-          if [ "$PRERELEASE" = "true" ]; then
-            make_latest=false
-          else
-            make_latest=true
+          # Decide whether this release should be marked "latest". Only stable
+          # (non-prerelease) releases are eligible, and only when no higher
+          # stable version has already been published. This keeps a patch to an
+          # older line (e.g. v0.5.3 cut after v0.6.0 shipped) from stealing
+          # "latest" from the newer line and from retagging the :latest images
+          # to the older build. The image builds normally infer "latest" from
+          # the published release, but ours is still a draft while they run, so
+          # pass the decision explicitly.
+          make_latest=false
+          if [ "$PRERELEASE" != "true" ]; then
+            highest="$(
+              {
+                gh release list --exclude-drafts --exclude-pre-releases \
+                  --limit 200 --json tagName --jq '.[].tagName'
+                echo "$TAG_NAME"
+              } | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
+            )"
+            if [ "$highest" = "$TAG_NAME" ]; then
+              make_latest=true
+            fi
           fi
 
           # Build and publish the release images, then BLOCK until they finish so
@@ -411,7 +424,7 @@ jobs:
             if [ "$PRERELEASE" = "true" ]; then
               publish_args+=(--prerelease --latest=false)
             else
-              publish_args+=(--latest=true)
+              publish_args+=(--latest="$make_latest")
             fi
             gh release edit "${publish_args[@]}"
           fi

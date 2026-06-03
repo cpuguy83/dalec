@@ -15,11 +15,13 @@ after a release request merges and the `release` environment is approved.
 - [Overview](#overview)
 - [How to cut a release](#how-to-cut-a-release)
 - [The release request file](#the-release-request-file)
+- [Curated highlights and the `release-note` label](#curated-highlights-and-the-release-note-label)
 - [What the workflow does](#what-the-workflow-does)
 - [Artifacts produced by a release](#artifacts-produced-by-a-release)
 - [Which branch should a release request go on?](#which-branch-should-a-release-request-go-on)
 - [Patch releases](#patch-releases)
 - [Pre-releases](#pre-releases)
+- [Latest releases and older lines](#latest-releases-and-older-lines)
 - [Verifying a release](#verifying-a-release)
 - [Immutability](#immutability)
 - [Re-running and recovery](#re-running-and-recovery)
@@ -117,6 +119,23 @@ go test ./cmd/release-request
 go run ./cmd/lint ./...
 ```
 
+## Curated highlights and the `release-note` label
+
+Every release ships an auto-generated, per-PR changelog. Two mechanisms let you
+shape what readers see:
+
+- **The `release-note` label.** Add it to any PR worth calling out. It groups the
+  PR under a **🌟 Highlights** category in the generated changelog (configured in
+  [`.github/release.yml`](.github/release.yml)) and marks it as a candidate for
+  the curated notes below.
+- **The curated `## Release notes` section** in the request file. A short,
+  human-written summary prepended above the generated changelog (and embedded in
+  the signed tag annotation). Keep it to highlights — the generated changelog
+  already lists every PR.
+
+To draft the curated highlights and triage which PRs deserve the `release-note`
+label, use the [`release-notes` skill](.github/skills/release-notes/SKILL.md).
+
 ## What the workflow does
 
 The `create-release` job ([`.github/workflows/create-release.yml`](.github/workflows/create-release.yml))
@@ -145,9 +164,13 @@ needed for signing and module download):
    skip this step.
 4. **Create the release as a draft.** Renders the release body —
    curated notes, then GitHub's generated changelog
-   (`POST /releases/generate-notes`), then the verification instructions from
+   (`POST /releases/generate-notes`, categorized by
+   [`.github/release.yml`](.github/release.yml)), then the verification
+   instructions from
    [`.github/release-notes/verification.md.tmpl`](.github/release-notes/verification.md.tmpl)
-   — and creates a **draft** release with `--verify-tag`.
+   — and creates a **draft** release with `--verify-tag`. PRs labeled
+   `release-note` are surfaced as **Highlights** in the generated changelog; see
+   [Curated highlights and the `release-note` label](#curated-highlights-and-the-release-note-label).
 5. **Build, sign, and attach the images (blocking).** Dispatches the two image
    workflows at the **tag ref** and blocks until both succeed:
    - [`release.yml`](.github/workflows/release.yml) → builds/signs the
@@ -160,16 +183,19 @@ needed for signing and module download):
    attestation, then writes a `*.digest.json` manifest, signs it
    (`cosign sign-blob` → `*.digest.json.cosign.bundle`), and uploads both to the
    **draft** release. Whether images also get the `latest` tag is passed
-   explicitly as the `make_latest` input (true for non-pre-releases), because the
-   release is still a draft and cannot be inferred as "latest" yet.
+   explicitly as the `make_latest` input — true only when this tag is the
+   highest stable version (see
+   [Latest releases and older lines](#latest-releases-and-older-lines)) —
+   because the release is still a draft and cannot be inferred as "latest" yet.
 
    This step is idempotent: on a re-run it reuses an already successful or
    in-flight build for the tag instead of rebuilding.
 6. **Publish the release.** Once both builds succeed, the draft is published
-   (`gh release edit --draft=false`, marked `--latest` unless it is a
-   pre-release). Publishing locks the release **immutably** with all signed
-   assets already attached. If either build fails, the job fails and the release
-   stays an unpublished draft.
+   (`gh release edit --draft=false`) and locked **immutably** with all signed
+   assets already attached. It is marked `--latest` only when it is the highest
+   stable version (see [Latest releases and older lines](#latest-releases-and-older-lines)).
+   If either build fails, the job fails and the release stays an unpublished
+   draft.
 
 ```
 release request PR ──merge──▶ Create Release (release environment approval)
@@ -265,6 +291,21 @@ later patches under `@refs/heads/release/0.5`.
 Set `prerelease: true` in the request. The release is marked as a pre-release,
 is **not** marked `latest`, and the images are **not** tagged `latest`
 (`make_latest` is `false`).
+
+## Latest releases and older lines
+
+Only the **highest stable version** is marked `latest`. When publishing, the
+workflow lists existing published stable releases, adds the tag being released,
+sorts them by semver, and sets `make_latest=true` only when this tag sorts
+highest. That value drives both the GitHub Release `latest` flag and whether the
+images are retagged `:latest`.
+
+This matters when you patch an **older** line. If `v0.6.0` is already out and you
+cut `v0.5.3` on `release/0.5`, `v0.5.3` is published normally (signed tag, signed
+images, immutable release) but is **not** marked `latest`, and the `:latest`
+image tags keep pointing at the newer `v0.6.x` build. Cutting a newer version
+later (e.g. `v0.6.1` or `v0.7.0`) reclaims `latest` automatically. To re-point
+`latest` by hand, use `gh release edit <tag> --latest`.
 
 ## Verifying a release
 
