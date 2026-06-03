@@ -56,11 +56,11 @@ the request file format and the rest of the release metadata.
    | :--- | :---- | :----------------- | :-------- |
 
    What to highlight: user-facing features, behavior or default changes, breaking
-   changes, notable fixes, security fixes, new target/distro support. What **not**
-   to highlight: dependency bumps (e.g. Dependabot PRs), test-only or CI changes,
+   changes, notable fixes, new target/distro support. What **not** to highlight:
+   dependency bumps (e.g. Dependabot PRs — dalec only generates LLB, so its
+   dependency CVEs are almost never user-impacting), test-only or CI changes,
    documentation-only changes, and internal refactors with no user-visible effect.
-   A security-relevant dependency bump is the exception — call those out. Do not
-   edit PR labels — that is a maintainer's call.
+   Do not edit PR labels — that is a maintainer's call.
 
 4. **Write the highlights.** Put a `## Release notes` section in
    `.github/releases/<tag>.md` (create the file from the `release-request` skill's
