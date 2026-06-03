@@ -23,6 +23,7 @@ after a release request merges and the `release` environment is approved.
 - [Verifying a release](#verifying-a-release)
 - [Immutability](#immutability)
 - [Re-running and recovery](#re-running-and-recovery)
+- [One-time setup: the binfmt mirror](#one-time-setup-the-binfmt-mirror)
 - [Changing the release workflows](#changing-the-release-workflows)
 
 ## Overview
@@ -323,6 +324,44 @@ an already-published release; attach assets while the release is still a draft.
 - If an image build fails, the `create-release` job fails and the release
   remains an **unpublished draft**. Fix the cause and re-run; the draft is
   reused and published once the builds pass.
+
+## One-time setup: the binfmt mirror
+
+Worker image builds register QEMU/binfmt emulators for cross-architecture
+builds using the `tonistiigi/binfmt` image. That image lives on Docker Hub,
+whose egress on hosted runners intermittently times out — which previously
+failed releases at the "Setup QEMU" step even with retries.
+
+To avoid depending on Docker Hub on the release hot path, the build pulls the
+emulator image from a **GHCR mirror** first (`ghcr.io/<owner>/binfmt`, the same
+trusted, allowlisted registry used for every other image), falling back to
+Docker Hub only if the mirror is missing.
+
+The mirror must be seeded **once per repository owner** (and refreshed whenever
+the pinned digest is bumped). Copying is digest-preserving, so the pin in
+`worker-images.yml` resolves against GHCR unchanged. Run this one-time command
+locally, authenticated to GHCR with a token that has `write:packages`:
+
+```sh
+owner="<your-org-or-user>"  # lowercase; matches github.repository_owner
+digest="sha256:d3b963f787999e6c0219a48dba02978769286ff61a5f4d26245cb6a6e5567ea3"
+
+docker login ghcr.io                 # username + a PAT with write:packages
+docker buildx imagetools create \
+  -t "ghcr.io/${owner}/binfmt:latest" \
+  "docker.io/tonistiigi/binfmt:latest@${digest}"
+
+# Confirm the digest was preserved on the mirror.
+docker buildx imagetools inspect "ghcr.io/${owner}/binfmt@${digest}"
+```
+
+(`crane copy docker.io/tonistiigi/binfmt:latest@${digest} ghcr.io/${owner}/binfmt:latest`
+works equally well.) Then make the resulting `binfmt` package visible to the
+build (typically `internal`/`public` for the org) so the worker jobs can pull
+it.
+
+If you bump the binfmt digest, update it in the "Setup QEMU" step in
+`worker-images.yml` and re-run the command above with the new digest.
 
 ## Changing the release workflows
 
