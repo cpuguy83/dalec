@@ -1,6 +1,6 @@
 ---
 name: release-notes
-description: Generate the curated "## Release notes" highlights for a Dalec release request. Use when asked to write, generate, draft, or refresh release notes or highlights for a Dalec release, or to label PRs worth mentioning in the changelog.
+description: Generate the curated "## Release notes" highlights for a Dalec release request. Use when asked to write, generate, draft, or refresh release notes or highlights for a Dalec release.
 argument-hint: "[version] [previous tag]"
 ---
 
@@ -14,9 +14,12 @@ changelog is generated automatically by the `Create Release` workflow (via the
 so this skill should produce a concise highlights summary, **not** an exhaustive
 PR list.
 
-The signal for "worth mentioning" is the **`release-note`** label on a PR. That
-label both groups the PR under **🌟 Highlights** in the generated changelog and
-marks it as a candidate for these curated notes.
+The **`release-note`** label is a complementary signal: maintainers can add it to
+a PR at merge time to group it under **🌟 Highlights** in the generated changelog.
+This skill reads the merged PRs directly and decides what is worth calling out —
+it treats an existing `release-note` label as a hint, but does **not** apply or
+change labels. Curating the highlights is the deliverable; labeling is a separate,
+optional maintainer action.
 
 Pairs with the [`release-request`](../release-request/SKILL.md) skill, which owns
 the request file format and the rest of the release metadata.
@@ -28,57 +31,36 @@ the request file format and the rest of the release metadata.
    - Major/minor (`vX.Y.0`): previous tag on the main release line.
    - Patch (`vX.Y.Z`): previous patch tag on that `release/**` branch.
 
-2. **Ensure the label exists** (idempotent):
-
-   ```bash
-   gh label create release-note \
-     --description "Worth calling out in the release notes / changelog highlights" \
-     --color 0E8A16 --force
-   ```
-
-3. **Gather merged PRs in range.** Use the previous tag's date as the lower
+2. **Gather merged PRs in range.** Use the previous tag's date as the lower
    bound, scoped to the release branch:
 
    ```bash
    repo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
    since="$(gh api "repos/${repo}/commits/${notes_start_tag}" --jq .commit.committer.date)"
 
-   # Everything merged in range (candidates to triage):
    gh pr list --repo "$repo" --state merged --base "$branch" \
      --search "merged:>=${since}" --limit 200 \
      --json number,title,url,labels,author
-
-   # Already flagged as noteworthy:
-   gh pr list --repo "$repo" --state merged --base "$branch" \
-     --search "merged:>=${since} label:release-note" --limit 200 \
-     --json number,title,url
    ```
 
-   Cross-check the PR set against `git log ${notes_start_tag}..${target} --merges`
-   when in doubt about range boundaries.
+   Any PR already carrying a `release-note` label is an obvious candidate, but
+   read the whole set and judge each one yourself. Cross-check against
+   `git log ${notes_start_tag}..${target} --merges` when in doubt about range
+   boundaries.
 
-4. **Triage and propose labels (get approval first).** Review the candidates and
-   identify additional PRs that deserve `release-note`. Before changing any PR,
-   present a table and **stop for explicit approval** — do not run `gh pr edit`
-   until the maintainer says to proceed:
+3. **Decide what is worth highlighting and report it.** You have read the PRs, so
+   just tell the maintainer what you found — present a table of the changes worth
+   calling out with a proposed bullet and a one-line rationale:
 
-   | PR # | Title | Add `release-note`? | Proposed highlight | Rationale |
-   | :--- | :---- | :------------------ | :----------------- | :-------- |
+   | PR # | Title | Proposed highlight | Rationale |
+   | :--- | :---- | :----------------- | :-------- |
 
-   What to highlight: user-facing features, behavior or default changes,
-   breaking changes (also add a `breaking-change` label), notable fixes, security
-   fixes, new target/distro support. What **not** to highlight: routine
-   dependency bumps, CI/test-only changes, internal refactors, docs typos.
+   What to highlight: user-facing features, behavior or default changes, breaking
+   changes, notable fixes, security fixes, new target/distro support. What **not**
+   to highlight: routine dependency bumps, CI/test-only changes, internal
+   refactors, docs typos. Do not edit PR labels — that is a maintainer's call.
 
-5. **Apply approved labels:**
-
-   ```bash
-   gh pr edit <number> --repo "$repo" --add-label release-note
-   # breaking changes:
-   gh pr edit <number> --repo "$repo" --add-label release-note --add-label breaking-change
-   ```
-
-6. **Write the highlights.** Put a `## Release notes` section in
+4. **Write the highlights.** Put a `## Release notes` section in
    `.github/releases/<tag>.md` (create the file from the `release-request` skill's
    [template](../release-request/template.md) if it does not exist yet). The
    section ends at the next `## ` heading and is extracted verbatim by
@@ -97,7 +79,7 @@ the request file format and the rest of the release metadata.
    lead with breaking changes (bold `**Breaking:**`). Omit the section entirely
    if there is nothing worth curating — the generated changelog still ships.
 
-7. **Validate** the request file still parses and lints:
+5. **Validate** the request file still parses and lints:
 
    ```bash
    go test ./cmd/release-request

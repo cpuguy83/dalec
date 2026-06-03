@@ -124,17 +124,19 @@ go run ./cmd/lint ./...
 Every release ships an auto-generated, per-PR changelog. Two mechanisms let you
 shape what readers see:
 
-- **The `release-note` label.** Add it to any PR worth calling out. It groups the
-  PR under a **🌟 Highlights** category in the generated changelog (configured in
-  [`.github/release.yml`](.github/release.yml)) and marks it as a candidate for
-  the curated notes below.
+- **The `release-note` label.** Maintainers can add it to any PR worth calling
+  out, usually at merge time. It groups the PR under a **🌟 Highlights** category
+  in the generated changelog (configured in
+  [`.github/release.yml`](.github/release.yml)).
 - **The curated `## Release notes` section** in the request file. A short,
   human-written summary prepended above the generated changelog (and embedded in
   the signed tag annotation). Keep it to highlights — the generated changelog
   already lists every PR.
 
-To draft the curated highlights and triage which PRs deserve the `release-note`
-label, use the [`release-notes` skill](.agent/skills/release-notes/SKILL.md).
+To draft the curated highlights, use the
+[`release-notes` skill](.agent/skills/release-notes/SKILL.md): it reads the merged
+PRs in range, reports which ones are worth calling out, and writes the section.
+It does not change PR labels — labeling stays a maintainer's call.
 
 ## What the workflow does
 
