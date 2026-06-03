@@ -54,7 +54,7 @@ The release pipeline is built around supply-chain security:
 1. **Open a release-request PR.** Add exactly one file named
    `.github/releases/<tag>.md` (for example `.github/releases/v0.27.0.md`). See
    [The release request file](#the-release-request-file) for the format. The
-   [`release-request` skill](.github/skills/release-request/SKILL.md) and
+   [`release-request` skill](.agent/skills/release-request/SKILL.md) and
    [`cmd/release-request`](cmd/release-request) help author and validate it.
 2. **Review and merge.** Reviewers confirm the `target` commit, that CI is green
    on the target branch, and that `notes_start_tag` points at the previous
@@ -75,7 +75,7 @@ The release pipeline is built around supply-chain security:
 
 A release request lives at `.github/releases/<tag>.md` and has YAML front matter
 (automation fields) followed by a Markdown body (reviewer context). Start from
-[`.github/skills/release-request/template.md`](.github/skills/release-request/template.md).
+[`.agent/skills/release-request/template.md`](.agent/skills/release-request/template.md).
 
 ```markdown
 ---
@@ -134,7 +134,7 @@ shape what readers see:
   already lists every PR.
 
 To draft the curated highlights and triage which PRs deserve the `release-note`
-label, use the [`release-notes` skill](.github/skills/release-notes/SKILL.md).
+label, use the [`release-notes` skill](.agent/skills/release-notes/SKILL.md).
 
 ## What the workflow does
 
