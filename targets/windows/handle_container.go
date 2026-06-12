@@ -140,9 +140,20 @@ func handleContainer(ctx context.Context, client gwclient.Client) (*gwclient.Res
 			platform = &defaultPlatform
 		}
 		baseImage := bi.ToState(sOpt, pg, llb.Platform(*platform))
-		out := baseImage.
-			File(llb.Copy(bin, "/", windowsSystemDir), pg).
-			With(copySymlinks(spec.GetImagePost(targetKey), pg))
+
+		// Install every package's binaries (primary + supplemental) into the
+		// image, matching the linux container target which installs all packages
+		// produced for the target. Each package's artifacts are staged under its
+		// own directory in a single state, so copy each one's contents into the
+		// system directory.
+		out := baseImage
+		for _, pkg := range windowsPackages(spec, targetKey) {
+			if len(pkg.Binaries) == 0 {
+				continue
+			}
+			out = out.File(llb.Copy(bin, "/"+pkg.Name+"/", windowsSystemDir, dalec.WithDirContentsOnly()), pg)
+		}
+		out = out.With(copySymlinks(spec.GetImagePost(targetKey), pg))
 
 		def, err := out.Marshal(ctx)
 		if err != nil {

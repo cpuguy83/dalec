@@ -31,12 +31,16 @@ func handleZip(ctx context.Context, client gwclient.Client) (*gwclient.Result, e
 			return nil, nil, err
 		}
 
+		if err := validateZipArtifacts(spec, targetKey); err != nil {
+			return nil, nil, err
+		}
+
 		pg := dalec.ProgressGroup("Build windows container: " + spec.Name)
 		worker := distroConfig.Worker(sOpt, pg)
 
 		bin := buildBinaries(ctx, spec, worker, client, sOpt, targetKey, pg)
 
-		st := getZipLLB(worker, platform, spec, bin, pg)
+		st := getZipLLB(worker, platform, spec, targetKey, bin, pg)
 
 		def, err := st.Marshal(ctx)
 		if err != nil {
@@ -177,8 +181,7 @@ func buildBinaries(ctx context.Context, spec *dalec.Spec, worker llb.State, clie
 
 	patched := dalec.PatchSources(worker, spec, sources, opts...)
 	buildScript := createBuildScript(spec, opts...)
-	artifacts := spec.GetArtifacts(targetKey)
-	script := generateInvocationScript(artifacts.Binaries)
+	script := generateInvocationScript(spec, targetKey)
 
 	builder := worker.With(dalec.SetBuildNetworkMode(spec))
 	st := builder.Run(
@@ -208,32 +211,94 @@ func buildBinaries(ctx context.Context, spec *dalec.Spec, worker llb.State, clie
 	return frontend.MaybeSign(ctx, client, st, spec, targetKey, sOpt)
 }
 
-func getZipLLB(worker llb.State, platform *ocispecs.Platform, spec *dalec.Spec, artifacts llb.State, opts ...llb.ConstraintsOpt) llb.State {
-	fileName := fmt.Sprintf("%s_%s-%s_%s.zip", spec.Name, spec.Version, spec.Revision, platform.Architecture)
-	outName := filepath.Join(outputDir, fileName)
+func getZipLLB(worker llb.State, platform *ocispecs.Platform, spec *dalec.Spec, targetKey string, artifacts llb.State, opts ...llb.ConstraintsOpt) llb.State {
+	const artifactsDir = "/tmp/artifacts"
+
+	// Each package's artifacts live under its own subdirectory and are zipped
+	// into a separate "<name>_<version>-<revision>_<arch>.zip" file.
+	script := &strings.Builder{}
+	fmt.Fprintln(script, "set -ex")
+	for _, pkg := range windowsPackages(spec, targetKey) {
+		fileName := fmt.Sprintf("%s_%s-%s_%s.zip", pkg.Name, spec.Version, spec.Revision, platform.Architecture)
+		outName := filepath.Join(outputDir, fileName)
+		srcDir := path.Join(artifactsDir, pkg.Name)
+		fmt.Fprintf(script, "(cd %q && zip %q *)\n", srcDir, outName)
+	}
+
 	zipped := worker.Run(
-		dalec.ShArgs("zip "+outName+" *"),
-		llb.Dir("/tmp/artifacts"),
-		llb.AddMount("/tmp/artifacts", artifacts),
+		dalec.ShArgs(script.String()),
+		llb.AddMount(artifactsDir, artifacts),
 		dalec.WithConstraints(opts...),
 	).AddMount(outputDir, llb.Scratch())
 	return zipped
 }
 
-func generateInvocationScript(binaries map[string]dalec.ArtifactConfig) *strings.Builder {
+// windowsPackage pairs a resolved package name with the binary artifacts that
+// go into it for a windows target.
+type windowsPackage struct {
+	// Name is the resolved package name (primary package name or the
+	// supplemental package's resolved name).
+	Name string
+	// Binaries are the binary artifacts that belong to this package.
+	Binaries map[string]dalec.ArtifactConfig
+}
+
+// windowsPackages returns the ordered set of packages produced for a windows
+// target: the primary package first, followed by supplemental packages sorted
+// by their map key. Windows packages only ship binaries.
+func windowsPackages(spec *dalec.Spec, targetKey string) []windowsPackage {
+	pkgs := []windowsPackage{{
+		Name:     spec.Name,
+		Binaries: spec.GetArtifacts(targetKey).Binaries,
+	}}
+
+	sub := spec.GetSubPackages(targetKey)
+	for _, key := range dalec.SortMapKeys(sub) {
+		p := sub[key]
+		var binaries map[string]dalec.ArtifactConfig
+		if p.Artifacts != nil {
+			binaries = p.Artifacts.Binaries
+		}
+		pkgs = append(pkgs, windowsPackage{
+			Name:     p.ResolvedName(spec.Name, key),
+			Binaries: binaries,
+		})
+	}
+
+	return pkgs
+}
+
+func generateInvocationScript(spec *dalec.Spec, targetKey string) *strings.Builder {
 	script := &strings.Builder{}
 	fmt.Fprintln(script, "#!/usr/bin/env sh")
 	fmt.Fprintln(script, "set -ex")
 	fmt.Fprintf(script, "/tmp/scripts/%s\n", buildScriptName)
-	sorted := dalec.SortMapKeys(binaries)
+
+	// Collect each package's binaries into a per-package directory so that the
+	// zip and container targets can address them individually. Files are copied
+	// (not moved) so a build output shared by multiple packages stays available.
+	for _, pkg := range windowsPackages(spec, targetKey) {
+		writePackageArtifacts(script, pkg)
+	}
+
+	return script
+}
+
+// writePackageArtifacts writes the commands that stage a single package's
+// binaries under "<outputDir>/<name>".
+func writePackageArtifacts(script *strings.Builder, pkg windowsPackage) {
+	destDir := path.Join(outputDir, pkg.Name)
+	fmt.Fprintf(script, "mkdir -p '%s'\n", destDir)
+
+	sorted := dalec.SortMapKeys(pkg.Binaries)
 	for _, bin := range sorted {
-		config := binaries[bin]
-		fmt.Fprintf(script, "mv '%s' '%s'\n", bin, outputDir)
+		config := pkg.Binaries[bin]
+		dest := path.Join(destDir, config.ResolveName(bin))
+		fmt.Fprintf(script, "cp -r '%s' '%s'\n", bin, dest)
 		if config.Permissions.Perm() != 0 {
-			fmt.Fprintf(script, "chmod %o '%s/%s'\n", config.Permissions.Perm(), outputDir, bin)
+			fmt.Fprintf(script, "chmod %o '%s'\n", config.Permissions.Perm(), dest)
 		}
 	}
-	return script
 }
 
 func createBuildScript(spec *dalec.Spec, opts ...llb.ConstraintsOpt) llb.State {
